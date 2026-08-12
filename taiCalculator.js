@@ -3171,108 +3171,54 @@ function getAllPongs(hand, melds, allMelds = []) {
   return pongs;
 }
 
-/**
- * 檢查兩色兄弟碰（兩種不同色的同數字刻子）
- */
 function checkLiangSeXiongDiPeng(hand, melds, allMelds = []) {
-  const pongs = getAllPongs(hand, melds, allMelds);
-  
-  // 按數字分組
+  const pongs = getAllTriplets(hand, melds, allMelds);
   const byNumber = {};
   for (let pong of pongs) {
-    if (!byNumber[pong.num]) {
-      byNumber[pong.num] = new Set();
-    }
+    if (pong.suit === 'honor') continue; // 必須是數字牌
+    if (!byNumber[pong.num]) byNumber[pong.num] = new Set();
     byNumber[pong.num].add(pong.suit);
   }
-  
-  // 檢查是否有數字出現在至少2種花色
   for (let suits of Object.values(byNumber)) {
-    if (suits.size >= 2) {
-      return true;
-    }
+    if (suits.size >= 2) return true; // 同一個數字出現在兩種花色的刻子中
   }
   return false;
 }
 
-/**
- * 檢查小三色兄弟碰（兩種不同色同數字刻子 + 另一種色眼牌）
- */
-function checkXiaoSanSeXiongDiPeng(hand, melds, allMelds = []) {
-  const pongs = getAllPongs(hand, melds, allMelds);
-  // 按數字分組
+function checkXiaoSanSeXiongDiPeng(hand, melds, allMelds = [], eyeTile = null) {
+  if (!eyeTile || eyeTile.type !== 'number') return false; // 必須要有數字眼牌
+  const pongs = getAllTriplets(hand, melds, allMelds);
+  const eyeVal = parseInt(eyeTile.value);
+
   const byNumber = {};
   for (let pong of pongs) {
-    if (!byNumber[pong.num]) {
-      byNumber[pong.num] = new Set();
-    }
+    if (pong.suit === 'honor') continue;
+    if (!byNumber[pong.num]) byNumber[pong.num] = new Set();
     byNumber[pong.num].add(pong.suit);
   }
-  
-  // 找出有兩種花色的數字
-  let targetNumber = null;
-  let targetSuits = null;
+
   for (let [num, suits] of Object.entries(byNumber)) {
-    if (suits.size === 2) {
-      targetNumber = parseInt(num);
-      targetSuits = suits;
-      break;
+    // 兩組同數字刻子 + 該數字的眼牌
+    if (suits.size >= 2 && parseInt(num) === eyeVal) {
+      if (!suits.has(eyeTile.suit)) return true; // 眼牌的花色必須與刻子不同
     }
   }
-  
-  if (!targetNumber) return false;
-  
-  // 檢查眼牌是否是另一種花色
-  const allTiles = [...hand];
-  for (let meld of melds) {
-    if (meld && meld.tiles) allTiles.push(...meld.tiles);
-  }
-  
-  // 找出眼牌（2張相同的牌）
-  const counts = {};
-  for (let tile of allTiles) {
-    if (tile.type === 'number') {
-      const key = `${tile.suit}_${tile.value}`;
-      counts[key] = (counts[key] || 0) + 1;
-    }
-  }
-  
-  for (let [key, count] of Object.entries(counts)) {
-    if (count === 2) {
-      const [suit, value] = key.split('_');
-      const num = parseInt(value);
-      // 眼牌數字相同，且花色是第三種
-      if (num === targetNumber && !targetSuits.has(suit)) {
-        return true;
-      }
-    }
-  }
-  
   return false;
 }
 
-/**
- * 檢查大三色兄弟碰（三種不同色的同數字刻子）
- */
 function checkDaSanSeXiongDiPeng(hand, melds, allMelds = []) {
-  const pongs = getAllPongs(hand, melds, allMelds);
-  
+  const pongs = getAllTriplets(hand, melds, allMelds);
   const byNumber = {};
   for (let pong of pongs) {
-    if (!byNumber[pong.num]) {
-      byNumber[pong.num] = new Set();
-    }
+    if (pong.suit === 'honor') continue;
+    if (!byNumber[pong.num]) byNumber[pong.num] = new Set();
     byNumber[pong.num].add(pong.suit);
   }
-  
   for (let suits of Object.values(byNumber)) {
-    if (suits.size === 3) {
-      return true;
-    }
+    if (suits.size >= 3) return true;
   }
   return false;
 }
-
 /**
  * 獲取所有刻子（包含數字和花色）
  */
@@ -3365,105 +3311,84 @@ function checkDaSanSeSanLianKe(hand, melds, allMelds = []) {
 /**
  * 檢查小三色147/258/369碰（兩組刻子 + 眼牌，不同色，數字符合數列）
  */
-function checkXiaoSanSe147(hand, melds) {
-  const patterns = [[1, 4, 7], [2, 5, 8], [3, 6, 9]];
-  const triplets = getAllTriplets(hand, melds);
-  if (triplets.length < 2) return 0;
-  
-  let count = 0;
-  const used = new Set();
-  
-  for (let pattern of patterns) {
-    const patternTriplets = triplets.filter(t => pattern.includes(t.num));
-    if (patternTriplets.length >= 2) {
-      const allTiles = [...hand];
-      for (let meld of melds) if (meld && meld.tiles) allTiles.push(...meld.tiles);
-      
-      const counts = {};
-      for (let tile of allTiles) {
-        if (tile.type !== 'flower') counts[tile.value] = (counts[tile.value] || 0) + 1;
-      }
-      
-      for (let [key, cnt] of Object.entries(counts)) {
-        if (cnt === 2) {
-          const match = key.match(/(\d+)/);
-          if (match) {
-            const num = parseInt(match[0]);
-            if (pattern.includes(num)) {
-              const eyeSuit = key.split('_')[0];
-              
-              // 找出所有符合的刻子組合
-              for (let i = 0; i < patternTriplets.length; i++) {
-                for (let j = i + 1; j < patternTriplets.length; j++) {
-                  const t1 = patternTriplets[i];
-                  const t2 = patternTriplets[j];
-                  if (t1.suit !== t2.suit && t1.suit !== eyeSuit && t2.suit !== eyeSuit) {
-                    const comboKey = `${pattern.join('_')}_${t1.suit}_${t2.suit}_${eyeSuit}_${num}`;
-                    if (!used.has(comboKey)) {
-                      count++;
-                      used.add(comboKey);
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-  return count;
-}
+function checkXiaoSanSe147(hand, melds, allMelds = [], eyeTile = null) {
+    const patterns = [[1, 4, 7], [2, 5, 8], [3, 6, 9]];
+    const triplets = getAllTriplets(hand, melds, allMelds);
+    if (triplets.length < 2 || !eyeTile || eyeTile.type !== 'number') return 0;
 
+    const eyeVal = parseInt(eyeTile.value);
+    const eyeSuit = eyeTile.suit;
+
+    let count = 0;
+    const used = new Set();
+
+    for (let pattern of patterns) {
+        if (!pattern.includes(eyeVal)) continue; // 🌟 嚴格防呆：眼牌必須在數列中
+
+        const patternTriplets = triplets.filter(t => t.suit !== 'honor' && pattern.includes(t.num));
+        if (patternTriplets.length >= 2) {
+            for (let i = 0; i < patternTriplets.length; i++) {
+                for (let j = i + 1; j < patternTriplets.length; j++) {
+                    const t1 = patternTriplets[i];
+                    const t2 = patternTriplets[j];
+
+                    // 🌟 嚴格防呆：刻子1、刻子2、眼牌 三者的花色必須互不相同！
+                    if (t1.suit !== t2.suit && t1.suit !== eyeSuit && t2.suit !== eyeSuit) {
+                        // 🌟 確保這三個數字確實完美湊齊了 147 或 258 或 369，沒有重複
+                        const nums = new Set([t1.num, t2.num, eyeVal]);
+                        if (nums.size === 3) {
+                            const comboKey = `${pattern.join('_')}_${t1.suit}_${t2.suit}_${eyeSuit}`;
+                            if (!used.has(comboKey)) {
+                                count++;
+                                used.add(comboKey);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return count;
+}
 /**
  * 檢查大三色147/258/369碰（三組刻子，不同色，數字符合數列）
  */
-function checkDaSanSe147(hand, melds) {
-  const patterns = [[1, 4, 7], [2, 5, 8], [3, 6, 9]];
-  const triplets = getAllTriplets(hand, melds);
-  
-  let count = 0;
-  const used = new Set();
-  
-  for (let pattern of patterns) {
-    const patternTriplets = triplets.filter(t => pattern.includes(t.num));
-    if (patternTriplets.length >= 3) {
-      const bySuit = { wan: [], tong: [], tiao: [] };
-      for (let t of patternTriplets) {
-        bySuit[t.suit].push(t.num);
-      }
-      
-      const hasWan = bySuit.wan.length > 0;
-      const hasTong = bySuit.tong.length > 0;
-      const hasTiao = bySuit.tiao.length > 0;
-      
-      if (hasWan && hasTong && hasTiao) {
-        // 找出所有可能的組合（每種花色各選一個數字）
-        for (let wanNum of bySuit.wan) {
-          for (let tongNum of bySuit.tong) {
-            for (let tiaoNum of bySuit.tiao) {
-              const nums = new Set([wanNum, tongNum, tiaoNum]);
-              const patternSet = new Set(pattern);
-              let matchCount = 0;
-              for (let p of patternSet) {
-                if (nums.has(p)) matchCount++;
-              }
-              if (matchCount === 3) {
-                const comboKey = `${pattern.join('_')}_${wanNum}_${tongNum}_${tiaoNum}`;
-                if (!used.has(comboKey)) {
-                  count++;
-                  used.add(comboKey);
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-  return count;
-}
+function checkDaSanSe147(hand, melds, allMelds = []) {
+    const patterns = [[1, 4, 7], [2, 5, 8], [3, 6, 9]];
+    const triplets = getAllTriplets(hand, melds, allMelds);
+    if (triplets.length < 3) return 0;
 
+    let count = 0;
+    const used = new Set();
+
+    for (let pattern of patterns) {
+        const patternTriplets = triplets.filter(t => t.suit !== 'honor' && pattern.includes(t.num));
+        if (patternTriplets.length >= 3) {
+            const bySuit = { wan: [], tong: [], tiao: [] };
+            for (let t of patternTriplets) bySuit[t.suit].push(t.num);
+
+            if (bySuit.wan.length > 0 && bySuit.tong.length > 0 && bySuit.tiao.length > 0) {
+                for (let w of bySuit.wan) {
+                    for (let t of bySuit.tong) {
+                        for (let s of bySuit.tiao) {
+                            const nums = new Set([w, t, s]);
+                            let matchCount = 0;
+                            for (let p of pattern) if (nums.has(p)) matchCount++;
+                            if (matchCount === 3) {
+                                const comboKey = `${pattern.join('_')}_${w}_${t}_${s}`;
+                                if (!used.has(comboKey)) {
+                                    count++;
+                                    used.add(comboKey);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return count;
+}
 
 // 23. 十六不搭/十三么系列檢查函數
 // 
@@ -5866,8 +5791,9 @@ try {
           taiDetails.push({ name: rules.handPatterns.xiaoYise147.name, tai: rules.handPatterns.xiaoYise147.tai });
         }
         
+        // ✅ 修正：把 eyeTile 傳給它
         const daSanSe147Count = checkDaSanSe147(hand, melds, allMelds);
-    const xiaoSanSe147Count = checkXiaoSanSe147(hand, melds, allMelds);
+        const xiaoSanSe147Count = checkXiaoSanSe147(hand, melds, allMelds, eyeTile);
         
         if (daSanSe147Count > 0 && rules.handPatterns?.daSanSe147?.enabled) {
           const tai = daSanSe147Count * rules.handPatterns.daSanSe147.tai;
@@ -6268,9 +6194,11 @@ if (!hasShuangShu && rules.handPatterns?.sanShu?.enabled && checkSanShu(hand, me
   taiDetails.push({ name: rules.handPatterns.sanShu.name, tai: rules.handPatterns.sanShu.tai });
 }
         
+// ✅ 修正：把 eyeTile 傳給它
         const hasDaSanSe = rules.handPatterns?.daSanSeXiongDiPeng?.enabled && checkDaSanSeXiongDiPeng(hand, melds, allMelds);
-    const hasXiaoSanSe = rules.handPatterns?.xiaoSanSeXiongDiPeng?.enabled && checkXiaoSanSeXiongDiPeng(hand, melds, allMelds);
-    const hasLiangSe = rules.handPatterns?.liangSeXiongDiPeng?.enabled && checkLiangSeXiongDiPeng(hand, melds, allMelds);
+        const hasXiaoSanSe = rules.handPatterns?.xiaoSanSeXiongDiPeng?.enabled && checkXiaoSanSeXiongDiPeng(hand, melds, allMelds, eyeTile);
+        const hasLiangSe = rules.handPatterns?.liangSeXiongDiPeng?.enabled && checkLiangSeXiongDiPeng(hand, melds, allMelds);
+        
         if (hasDaSanSe) {
           totalTai += rules.handPatterns.daSanSeXiongDiPeng.tai;
           taiDetails.push({ name: rules.handPatterns.daSanSeXiongDiPeng.name, tai: rules.handPatterns.daSanSeXiongDiPeng.tai });
