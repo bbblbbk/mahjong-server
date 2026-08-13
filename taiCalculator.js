@@ -279,27 +279,21 @@ function isSelfDraw(winType) {
 /**
  * 🌟 智能等牌掃描器 (自動判定 獨獨 / 假獨 / 對碰)
  */
-function checkOnlyWaitAndPairWait(hand, melds, winTile, winType) {
-    let readyHand = [...hand];
-    let actualWinTile = winTile;
+function checkOnlyWaitAndPairWait(hand, melds, winTile, winType, allMelds, eyeTile) {
+    if (!winTile) return { isOnlyWait: false, isPairWait: false, isFakeOnlyWait: false };
 
-    // 🌟 核心修正：不管是自摸還是出銃，都用精準的 filter 來拔除那張胡的牌
-    if (actualWinTile) {
-        if (readyHand.length % 3 === 2) {
-            let removed = false;
-            readyHand = readyHand.filter(t => {
-                if (!removed && (t.id === actualWinTile.id || (t.suit === actualWinTile.suit && t.value === actualWinTile.value))) {
-                    removed = true;
-                    return false;
-                }
-                return true;
-            });
-        }
+    let readyHand = [...hand];
+    if (readyHand.length % 3 === 2) {
+        let removed = false;
+        readyHand = readyHand.filter(t => {
+            if (!removed && (t.id === winTile.id || (t.suit === winTile.suit && t.value === winTile.value))) {
+                removed = true;
+                return false;
+            }
+            return true;
+        });
     }
 
-    if (!actualWinTile) return { isOnlyWait: false, isPairWait: false, isFakeOnlyWait: false };
-
-    // 1. 窮舉測試 34 種牌，找出這副聽牌「到底能胡哪幾種牌」
     const winningTiles = [];
     for (let suit of ['wan', 'tong', 'tiao']) {
         for (let v = 1; v <= 9; v++) {
@@ -314,10 +308,8 @@ function checkOnlyWaitAndPairWait(hand, melds, winTile, winType) {
         if (res && res.melds && res.melds.length === 5 && res.eyeTile) winningTiles.push(`honor_${h}`);
     }
 
-    // 🎯 判定 1：獨獨 (全牌海只有這唯一 1 種牌能胡)
     const isOnlyWait = winningTiles.length === 1;
-    
-    // 🎯 判定 2：對碰 (剛好聽 2 種牌，而且這 2 種牌在你的聽牌裡剛好都是對子)
+
     let isPairWait = false;
     if (winningTiles.length === 2) {
         const t1 = winningTiles[0].split('_');
@@ -327,25 +319,29 @@ function checkOnlyWaitAndPairWait(hand, melds, winTile, winType) {
         if (c1 === 2 && c2 === 2) isPairWait = true;
     }
 
-    // 🎯 判定 3：假獨 (聽多張，但胡的這張牌【無法形成兩面聽】，只能當作邊/嵌/單釣)
     let isFakeOnlyWait = false;
     if (winningTiles.length > 1 && !isPairWait) {
+        // 🌟 核心修正：假獨必須「無法形成兩面聽」。
+        // 我們直接去拆解好的 allMelds 裡面找，看這張 winTile 是不是被用在兩面聽的順子裡！
         let isTwoSided = false;
-        const winSuit = actualWinTile.suit;
-        const winVal = parseInt(actualWinTile.value);
-        
-        if (!isNaN(winVal)) {
-            const hasMinus1 = readyHand.some(t => t.suit === winSuit && parseInt(t.value) === winVal - 1);
-            const hasMinus2 = readyHand.some(t => t.suit === winSuit && parseInt(t.value) === winVal - 2);
-            const hasPlus1 = readyHand.some(t => t.suit === winSuit && parseInt(t.value) === winVal + 1);
-            const hasPlus2 = readyHand.some(t => t.suit === winSuit && parseInt(t.value) === winVal + 2);
-            
-            // 檢查是否為兩面搭子：如果有 n-1, n-2，且 n-3 也能胡，代表這是一組兩面聽
-            if (hasMinus1 && hasMinus2 && winningTiles.includes(`${winSuit}_${winVal - 3}`)) isTwoSided = true;
-            if (hasPlus1 && hasPlus2 && winningTiles.includes(`${winSuit}_${winVal + 3}`)) isTwoSided = true;
+        const winSuit = winTile.suit;
+        const winVal = parseInt(winTile.value);
+
+        if (!isNaN(winVal) && allMelds && allMelds.length > 0) {
+            for (let m of allMelds) {
+                if (m.type === 'chow' && m.tiles[0].suit === winSuit) {
+                    const nums = m.tiles.map(t => parseInt(t.value)).sort((a,b)=>a-b);
+                    if (nums.includes(winVal)) {
+                        if (nums[0] === winVal && winVal < 7 && winningTiles.includes(`${winSuit}_${winVal + 3}`)) {
+                            isTwoSided = true; // 作為前端 (例如聽 1,4 的 1)
+                        } else if (nums[2] === winVal && winVal > 3 && winningTiles.includes(`${winSuit}_${winVal - 3}`)) {
+                            isTwoSided = true; // 作為後端 (例如聽 1,4 的 4)
+                        }
+                    }
+                }
+            }
         }
         
-        // 如果不是兩面聽，也不是對碰，那就一定是假獨！
         if (!isTwoSided) {
             isFakeOnlyWait = true;
         }
@@ -447,22 +443,18 @@ function checkLuyise(hand, melds) {
   return true;
 }
 
-function checkPongpong(hand, melds) {
-  let pongCount = 0;
-  
-  for (let meld of melds) {
-    if (meld && (meld.type === 'pong' || meld.type === 'kong')) {
-      pongCount++;
+function checkPongpong(hand, melds, allMelds = []) {
+  // 🌟 核心修正：不再盲目數手牌，直接檢查拆解出的最終面子，確保 5 組全都是刻子或槓子！
+  if (allMelds && allMelds.length > 0) {
+    let pongCount = 0;
+    for (let m of allMelds) {
+      if (['pong', 'anKong', 'mingKong', 'kong'].includes(m.type)) {
+        pongCount++;
+      }
     }
+    return pongCount === 5; // 5 組刻/槓子 + 1 對眼
   }
-  
-  const handCounts = countTiles(hand.filter(t => t.type !== 'flower'));
-  for (let count of Object.values(handCounts)) {
-    if (count === 3) pongCount++;
-    if (count === 4) pongCount++;
-  }
-  
-  return pongCount === 5;
+  return false;
 }
 
 /**
@@ -4398,49 +4390,23 @@ function checkOneSetFlower(hand, melds, flowers = []) {
 function countSameSuitCombinations(hand, melds, suit, requiredStarts, isMing = false, winType = null, winTile = null, allMelds = []) {
     const chows = extractAllChows(hand, melds, winType, winTile, allMelds);
     
-    // 清龍特殊處理
+    // 清龍特殊處理 (147)
     if (requiredStarts.length === 3 && requiredStarts[0] === 1 && requiredStarts[1] === 4 && requiredStarts[2] === 7) {
-        // 統計所有順子（不分明暗）的起始數字
-        const allCounts = {};
-        for (let chow of chows) {
-            if (chow.suit === suit) {
-                allCounts[chow.start] = (allCounts[chow.start] || 0) + 1;
-            }
-        }
-        
-        const count1 = allCounts[1] || 0;
-        const count4 = allCounts[4] || 0;
-        const count7 = allCounts[7] || 0;
-        
-        if (isMing) {
-            // 明清龍：至少有一組是明順子
-            const mingCounts = {};
-            for (let chow of chows) {
-                if (chow.isMeld && chow.suit === suit) {
-                    mingCounts[chow.start] = (mingCounts[chow.start] || 0) + 1;
+        let total = 0;
+        const c1s = chows.filter(c => c.suit === suit && c.start === 1);
+        const c4s = chows.filter(c => c.suit === suit && c.start === 4);
+        const c7s = chows.filter(c => c.suit === suit && c.start === 7);
+
+        for (let c1 of c1s) {
+            for (let c4 of c4s) {
+                for (let c7 of c7s) {
+                    // 🌟 核心修正：獨立判定每條龍的明暗
+                    const comboIsMing = c1.isMeld || c4.isMeld || c7.isMeld;
+                    if (isMing === comboIsMing) total++;
                 }
             }
-            
-            const hasMing1 = (mingCounts[1] || 0) > 0;
-            const hasMing4 = (mingCounts[4] || 0) > 0;
-            const hasMing7 = (mingCounts[7] || 0) > 0;
-            
-            if (count1 > 0 && count4 > 0 && count7 > 0 && (hasMing1 || hasMing4 || hasMing7)) {
-                const combinations = count1 * count4 * count7;
-                if (DEBUG) console.log(`明清龍計算: count1=${count1}, count4=${count4}, count7=${count7}, 有明順子, 結果=${combinations}`);
-                return combinations;
-            }
-            return 0;
-        } else {
-            // 暗清龍：全部是暗順子（沒有明順子）
-            const hasMing = chows.some(c => c.isMeld && c.suit === suit);
-            if (!hasMing && count1 > 0 && count4 > 0 && count7 > 0) {
-                const combinations = count1 * count4 * count7;
-                if (DEBUG) console.log(`暗清龍計算: count1=${count1}, count4=${count4}, count7=${count7}, 無明順子, 結果=${combinations}`);
-                return combinations;
-            }
-            return 0;
         }
+        return total;
     }
     
     // ============================================
@@ -4527,70 +4493,28 @@ function countSameSuitCombinations(hand, melds, suit, requiredStarts, isMing = f
  */
 function countZaLongCombinations(hand, melds, isMing = false, winType = null, winTile = null, allMelds = []) {
     const chows = extractAllChows(hand, melds, winType, winTile, allMelds);
+    const byStart = { 1: [], 4: [], 7: [] };
     
-    if (isMing) {
-        // 明雜龍：至少有一組是明順子
-        // 先檢查是否有明順子
-        const hasMeldChow = chows.some(c => c.isMeld === true);
-        if (!hasMeldChow) return 0;
-        
-        // 統計所有順子（不分開）的起始數字和花色
-        const byStart = { 1: [], 4: [], 7: [] };
-        for (let chow of chows) {
-            if (byStart[chow.start] !== undefined) {
-                byStart[chow.start].push(chow.suit);
-            }
-        }
-        
-        // 檢查是否三種數字都存在
-        if (byStart[1].length === 0 || byStart[4].length === 0 || byStart[7].length === 0) {
-            return 0;
-        }
-        
-        // 計算組合數
-        let count = 0;
-        for (let suit1 of byStart[1]) {
-            for (let suit2 of byStart[4]) {
-                if (suit2 === suit1) continue;
-                for (let suit3 of byStart[7]) {
-                    if (suit3 === suit1 || suit3 === suit2) continue;
-                    count++;
-                }
-            }
-        }
-        
-        if (DEBUG) console.log(`明雜龍計算: 組合數=${count}`);
-        return count;
-    } else {
-        // 暗雜龍：全部是暗順子（沒有明順子）
-        const hasMeldChow = chows.some(c => c.isMeld === true);
-        if (hasMeldChow) return 0;
-        
-        const byStart = { 1: [], 4: [], 7: [] };
-        for (let chow of chows) {
-            if (byStart[chow.start] !== undefined) {
-                byStart[chow.start].push(chow.suit);
-            }
-        }
-        
-        if (byStart[1].length === 0 || byStart[4].length === 0 || byStart[7].length === 0) {
-            return 0;
-        }
-        
-        let count = 0;
-        for (let suit1 of byStart[1]) {
-            for (let suit2 of byStart[4]) {
-                if (suit2 === suit1) continue;
-                for (let suit3 of byStart[7]) {
-                    if (suit3 === suit1 || suit3 === suit2) continue;
-                    count++;
-                }
-            }
-        }
-        
-        if (DEBUG) console.log(`暗雜龍計算: 組合數=${count}`);
-        return count;
+    for (let chow of chows) {
+        if (byStart[chow.start] !== undefined) byStart[chow.start].push(chow); // 存入完整順子物件
     }
+    
+    if (byStart[1].length === 0 || byStart[4].length === 0 || byStart[7].length === 0) return 0;
+    
+    let count = 0;
+    for (let c1 of byStart[1]) {
+        for (let c4 of byStart[4]) {
+            if (c4.suit === c1.suit) continue; // 必須不同花色
+            for (let c7 of byStart[7]) {
+                if (c7.suit === c1.suit || c7.suit === c4.suit) continue;
+                
+                // 🌟 核心修正：只針對參與這條龍的「這三組順子」判定明暗！
+                const comboIsMing = c1.isMeld || c4.isMeld || c7.isMeld;
+                if (isMing === comboIsMing) count++;
+            }
+        }
+    }
+    return count;
 }
 
 /**
@@ -5770,7 +5694,7 @@ try {
       if (isKankanhu) {
         totalTai += rules.handPatterns.kankanhu.tai;
         taiDetails.push({ name: rules.handPatterns.kankanhu.name, tai: rules.handPatterns.kankanhu.tai });
-      } else if (rules.handPatterns?.pongpong?.enabled && checkPongpong(hand, melds)) {
+      } else if (rules.handPatterns?.pongpong?.enabled && checkPongpong(hand, melds, allMelds)) {
         totalTai += rules.handPatterns.pongpong.tai;
         taiDetails.push({ name: rules.handPatterns.pongpong.name, tai: rules.handPatterns.pongpong.tai });
       }
@@ -5861,8 +5785,8 @@ try {
     // 10. 智能觸發對碰/獨獨/假獨
     // ============================================
     try {
-        const autoWait = checkOnlyWaitAndPairWait(hand, melds, extraInfo.winTile, winType);
-        
+// ✅ 修正：把 allMelds 與 eyeTile 傳進去給它做精準剖析
+        const autoWait = checkOnlyWaitAndPairWait(hand, melds, extraInfo.winTile, winType, allMelds, eyeTile);        
         if (rules.handPatterns?.pairWait?.enabled && autoWait.isPairWait) {
             totalTai += rules.handPatterns.pairWait.tai;
             taiDetails.push({ name: rules.handPatterns.pairWait.name, tai: rules.handPatterns.pairWait.tai });
