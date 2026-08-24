@@ -190,6 +190,13 @@ for(let i=0; i<4; i++) {
         this.pullLedger[i][j] = { amount: 0, count: 0 };
     }
 }
+this.turnTimer = null;   // 🌟 伺服器打牌倒數計時器
+    this.actionTimer = null; // 🌟 伺服器吃碰槓倒數計時器
+  }
+
+  clearTimers() {
+      if (this.turnTimer) { clearTimeout(this.turnTimer); this.turnTimer = null; }
+      if (this.actionTimer) { clearTimeout(this.actionTimer); this.actionTimer = null; }
   }
 
 // 🌟 升級版：即時加減分 + 保留拉莊倍數面板
@@ -265,45 +272,52 @@ processPulling(winnerSeat, loserSeat, currentScore, isSelfDraw) {
       }
       return customRules;
   }
-// 🌟 新增：即時賞罰轉帳引擎（1底 = 5分，0.5底 = 2.5分）
+// 🌟 新增：即時賞罰轉帳引擎（加入 try-catch 防崩潰保護）
   executeInstantPayout(triggerSeat, targetSeats, baseAmount, reason, type) {
-      const pointsPerBase = 5;
-      const points = baseAmount * pointsPerBase;
-      const triggerPlayer = this.getPlayerBySeatIndex(triggerSeat);
-      if (!triggerPlayer) return;
+      try {
+          const pointsPerBase = 5; // 1底 = 5分
+          const points = baseAmount * pointsPerBase;
+          const triggerPlayer = this.getPlayerBySeatIndex(triggerSeat);
+          if (!triggerPlayer) return;
 
-      let totalTransfer = 0;
-      const details = [];
+          let totalTransfer = 0;
 
-      for (let seat of targetSeats) {
-          if (seat === triggerSeat) continue;
-          const targetPlayer = this.getPlayerBySeatIndex(seat);
-          if (targetPlayer && targetPlayer.isOnline) {
-              if (type === 'collect') {
-                  // 收：觸發者向其餘玩家收分
-                  targetPlayer.score -= points;
-                  totalTransfer += points;
-              } else if (type === 'penalize') {
-                  // 罰：觸發者賠給其餘玩家分
-                  targetPlayer.score += points;
-                  totalTransfer -= points;
+          for (let seat of targetSeats) {
+              if (seat === triggerSeat) continue;
+              const targetPlayer = this.getPlayerBySeatIndex(seat);
+              if (targetPlayer && targetPlayer.isOnline) {
+                  if (type === 'collect') {
+                      targetPlayer.score -= points;
+                      totalTransfer += points;
+                  } else if (type === 'penalize') {
+                      targetPlayer.score += points;
+                      totalTransfer -= points;
+                  }
               }
           }
+
+          triggerPlayer.score += totalTransfer;
+
+          // 安全紀錄大賽進出底數
+          const triggerSocketId = this.playerOrder[triggerSeat];
+          if (triggerSocketId) {
+              const tStats = this.roomStats.get(triggerSocketId);
+              if (tStats) tStats.totalInstantPayouts += Math.abs(baseAmount);
+          }
+
+          const actionName = type === 'collect' ? '獲得' : '支付';
+          const msg = `✨ [特別賞罰] ${triggerPlayer.name} 觸發【${reason}】${actionName} ${baseAmount} 底 (${Math.abs(totalTransfer)} 分)`;
+          
+          console.log(`💰 執行即時轉帳: ${msg}`);
+          
+          // 廣播給全場
+          this.broadcastGameMessage(msg, 'system');
+          this.broadcastGameState();
+          this.broadcastPlayerState();
+      } catch (e) {
+          console.error("❌ 即時賞罰發生錯誤:", e);
       }
-
-      triggerPlayer.score += totalTransfer;
-
-    // 🌟 新增：累計特別賞罰動態進出底數
-    const tStats = this.roomStats.get(this.playerOrder[triggerSeat]);
-    if (tStats) tStats.totalInstantPayouts += Math.abs(baseAmount);
-
-      // 廣播即時分數變動訊息
-      const actionName = type === 'collect' ? '獲得' : '支付';
-      this.broadcastGameMessage(`✨ [特別賞罰] ${triggerPlayer.name} 觸發【${reason}】${actionName} ${baseAmount} 底 (${Math.abs(totalTransfer)} 分)`, 'system');
-      this.broadcastGameState();
-      this.broadcastPlayerState();
   }
-
   // 🌟 新增：花牌即時賞罰檢測（一枱花 / 一枱草防重分配算法）
   checkFlowerInstantPayout(player) {
       player.usedFlowerIds = player.usedFlowerIds || new Set();
@@ -389,6 +403,7 @@ processPulling(winnerSeat, loserSeat, currentScore, isSelfDraw) {
       isOnline: true, isDealer: false, hasWon: false, hasDiscarded: false,
       isAI: playerData.isAI || false,
       // ✅ 加入叮牌相關屬性
+      isAFK: false, // 🌟 新增託管屬性
       isTing: false,
       tingType: null,
       isEatTing: false,
@@ -449,8 +464,11 @@ processPulling(winnerSeat, loserSeat, currentScore, isSelfDraw) {
 
   allPlayersReady() {
     let readyCount = 0;
-    for (let player of this.players.values()) { if (player.isReady) readyCount++; }
-    return readyCount >= 1;
+    for (let player of this.players.values()) { 
+        if (player.isReady) readyCount++; 
+    }
+    // 🌟 核心修正：大廳必須「目前房間內所有人」都按了準備，且至少要有1人，才會觸發開局！
+    return readyCount === this.players.size && this.players.size > 0;
   }
 
   broadcastGameState() { io.to(this.roomId).emit('gameStateUpdate', this.getPublicGameState()); }
@@ -491,6 +509,7 @@ processPulling(winnerSeat, loserSeat, currentScore, isSelfDraw) {
               isDealer: p.isDealer,
               isTing: p.isTing,
               isReady: p.isReady,
+              isAFK: p.isAFK,
               handCount: p.hand.length,
               flowersCount: p.flowers.length,
               meldsCount: p.melds.length,
@@ -847,7 +866,7 @@ checkActionsAfterDiscard(discarderSocketId, tile) {
         }
     } else {
         console.log('沒有待處理操作，直接輪到下家');
-        setTimeout(() => { this.nextTurn(); }, 300);
+        this.scheduleNextTurn(300);
     }
 }
 // server.js - GameRoom 類別中
@@ -1038,7 +1057,7 @@ generateTingDetails(socketId) {
       if (this.waitingForAction.length === 0) {
           this.clearPendingActions();
           if (this.gameState !== 'finished') {
-              setTimeout(() => { this.nextTurn(); }, 500);
+              this.scheduleNextTurn(500);
           }
       }}
 
@@ -1097,7 +1116,7 @@ checkLowerPriorityActions(tile) {
         }
     } else {
         console.log('沒有低優先級操作，輪到下家');
-        setTimeout(() => { this.nextTurn(); }, 300);
+        this.scheduleNextTurn(300);
     }
 }
 
@@ -1369,20 +1388,25 @@ this.discardPile = this.discardPile.filter(t => t.id !== tile.id);    this.lastD
     }
     return { success: true };
 }
-
-  playerKong(socketId) {
+playerKong(socketId) {
     const player = this.players.get(socketId);
     this.consecutiveDiscards = [];
     if (!player || !this.lastDiscard) return { success: false };
+    
     const tile = this.lastDiscard;
     const matchingTiles = player.hand.filter(t => t.type === tile.type && t.suit === tile.suit && t.value === tile.value);
     if (matchingTiles.length < 3) return { success: false };
+    
     player.hand = player.hand.filter(t => !(t.type === tile.type && t.suit === tile.suit && t.value === tile.value));
     player.melds.push({ type: 'mingKong', tiles: [...matchingTiles, tile], fromPlayer: this.lastDiscardPlayer });
+    
     this.broadcastGameMessage(`${player.name} 槓了 ${this.getTileDisplayName(tile)}`);
+    // 🌟 已經將明槓的即時收錢邏輯移除！
+
     const drawnTile = this.drawTile(socketId);
     this.clearPendingActions();
     this.currentTurn = player.seatIndex;
+    
     io.to(this.roomId).emit('meldCreated', { seat: player.seatIndex, meld: { type: 'mingKong', tiles: [...matchingTiles, tile], fromPlayer: this.lastDiscardPlayer ? this.players.get(this.lastDiscardPlayer)?.seatIndex : -1 } });
     this.discardPile = this.discardPile.filter(t => t.id !== tile.id);
     this.lastDiscard = null; this.lastDiscardPlayer = null;
@@ -1395,31 +1419,29 @@ this.discardPile = this.discardPile.filter(t => t.id !== tile.id);    this.lastD
         privateState: this.getPrivatePlayerState(socketId) 
     });
     
-    // ✅ 計算 canWin 和 canTing
     const canWin = this.checkCanWin(socketId);
-   const canTing = !player.isAI ? this.checkCanTing(socketId) : false;
-    // 🌟 修正：使用 player.isAI 和 socketId
+    const canTing = !player.isAI ? this.checkCanTing(socketId) : false;
     const tingDetailsData = (!player.isAI && canTing) ? this.generateTingDetails(socketId) : [];
+    
     io.to(socketId).emit('yourTurn', { 
         isFirstTurn: false, 
-        drawnTile: drawnTile,  // ✅ 只保留一個
+        drawnTile: drawnTile,  
         canWin: canWin, 
         canTing: canTing,
         isTing: player.isTing,
-        countdownSec: this.settings.timeLimit || 15, // 🌟 新增這行
-        tingDetails: tingDetailsData, // 🌟 天書上車！
+        countdownSec: this.settings.timeLimit || 15, 
+        tingDetails: tingDetailsData, 
         privateState: this.getPrivatePlayerState(socketId) 
     });
     
     if (player.isAI) {
         setTimeout(() => {
-            console.log(`🤖 AI ${player.name} 槓後打牌`);
             this.aiDiscard(player);
         }, 300);
     }
     return { success: true, drawnTile };
-}
- playerSelfKong(socketId, data) {
+  }
+playerSelfKong(socketId, data) {
       const player = this.players.get(socketId);
       if (!player || this.currentTurn !== player.seatIndex) return { success: false, reason: '不是你的回合' };
       
@@ -1432,24 +1454,20 @@ this.discardPile = this.discardPile.filter(t => t.id !== tile.id);    this.lastD
       const matchingTiles = player.hand.filter(t => t.type === targetType && t.suit === targetSuit && t.value === targetValue);
 
       // ==========================================
-      // 🌟 情況 A：暗槓
+      // 🌟 情況 A：暗槓 (唯一會收錢的槓牌)
       // ==========================================
       if (matchingTiles.length === 4) {
           if (player.isTing) return { success: false, reason: '叮牌後不可暗槓' };
 
-          // 1. 🌟 確實從伺服器記憶體中拔除這 4 張牌！
           player.hand = player.hand.filter(t => !(t.type === targetType && t.suit === targetSuit && t.value === targetValue));
-          
           player.melds.push({ type: 'anKong', tiles: matchingTiles });
           
-          this.broadcastGameMessage(`✨ [特別賞罰] ${player.name} 觸發【暗槓】獲得 1 底`, 'system'); 
+          // 🌟 只有暗槓會觸發：向全場收 1 底
           this.executeInstantPayout(player.seatIndex, [0, 1, 2, 3], 1, '暗槓', 'collect');
 
-          // 2. 🌟 補牌 (從牌牆抽一張)
           const drawnTile = this.drawTile(socketId);
           this.sortHand(player);
 
-          // 3. 🌟 廣播給其他人：傳送合法的假牌 (一萬)，這樣 Unity 不會報錯，且配合 faceUp=false 會自然翻出完美的藍色背面！
           io.to(this.roomId).emit('meldCreated', { 
               seat: player.seatIndex, 
               meld: { 
@@ -1458,18 +1476,17 @@ this.discardPile = this.discardPile.filter(t => t.id !== tile.id);    this.lastD
               } 
           });
 
-          // 4. 🌟 終極強制同步：直接發送 privateStateUpdate 給自己，確保手牌立刻拔除 4 張並加上 1 張補牌！
           io.to(socketId).emit('privateStateUpdate', {
               success: true,
-// ✅ 修正為正確的名稱與參數
-              privateState: this.getPrivatePlayerState(socketId)          });
+              privateState: this.getPrivatePlayerState(socketId)          
+          });
 
           this.refreshAndSendYourTurn(socketId, player, drawnTile);
           return { success: true, type: 'anKong' };
       }
 
       // ==========================================
-      // 🌟 情況 B：加槓 / 補槓
+      // 🌟 情況 B：加槓 / 補槓 (不收錢)
       // ==========================================
       const existingMeldIdx = player.melds.findIndex(m => m.type === 'pong' && m.tiles[0].value === targetValue && m.tiles[0].suit === targetSuit);
       const hasFourthTile = player.hand.some(t => t.type === targetType && t.suit === targetSuit && t.value === targetValue);
@@ -1483,15 +1500,13 @@ this.discardPile = this.discardPile.filter(t => t.id !== tile.id);    this.lastD
 
           this.broadcastGameMessage(`${player.name} 補槓了 ${targetValue}${targetSuit === 'honor' ? '' : targetSuit}`, 'info');
 
-          // 🌟 加槓也要補牌！
+          // 🌟 已經將加槓/補槓的即時收錢邏輯移除！直接補牌。
           const drawnTile = this.drawTile(socketId);
           this.sortHand(player);
 
-io.to(this.roomId).emit('meldCreated', { seat: player.seatIndex, meld: player.melds[existingMeldIdx] });
-          // 🌟 強制同步手牌
+          io.to(this.roomId).emit('meldCreated', { seat: player.seatIndex, meld: player.melds[existingMeldIdx] });
           io.to(socketId).emit('privateStateUpdate', {
               success: true,
-              // ✅ 修正為正確的名稱與參數
               privateState: this.getPrivatePlayerState(socketId)
           });
 
@@ -1865,14 +1880,28 @@ console.log(`isSelfDraw: ${isSelfDraw}, winTile: ${winTile ? winTile.value + win
 
 
 
-  clearPendingActions() { this.pendingActions = []; this.waitingForAction = null; }
+  clearPendingActions() { 
+      this.pendingActions = []; 
+      this.waitingForAction = null; 
+      this.clearTimers(); // 🌟 清除計時器
+  }
 
-
+scheduleNextTurn(delay = 300) {
+      if (this.nextTurnTimer) {
+          clearTimeout(this.nextTurnTimer);
+      }
+      this.nextTurnTimer = setTimeout(() => {
+          this.nextTurnTimer = null;
+          if (this.gameState !== 'finished') {
+              this.nextTurn();
+          }
+      }, delay);
+  }
   // 🌟 核心引擎：統一結算玩家的操作優先級
   resolvePendingActions() {
       if (!this.pendingActionQueue || this.pendingActionQueue.responses.length === 0) {
           this.pendingActionQueue = null;
-          this.nextTurn();
+          this.scheduleNextTurn(300);
           return;
       }
 
@@ -1905,7 +1934,7 @@ console.log(`isSelfDraw: ${isSelfDraw}, winTile: ${winTile ? winTile.value + win
       } 
       else {
           // 大家全按了 Pass 或者都沒能操作，輪到下一家摸牌
-          setTimeout(() => { this.nextTurn(); }, 300);
+          this.scheduleNextTurn(300);
       }
   }
 
@@ -1997,16 +2026,27 @@ console.log(`發送 yourTurn: isTing=${currentPlayer.isTing}`);
         this.broadcastPlayerState();
         
         // AI 自動打牌
-        if (currentPlayer.isAI) {
-            console.log(`🤖 排程 AI ${currentPlayer.name} 在 1000ms 後打牌`);
+       if (currentPlayer.isAI || currentPlayer.isAFK) {
+            console.log(`🤖 AI/託管 ${currentPlayer.name} 在 1000ms 後打牌`);
             setTimeout(() => { 
-                if (this.gameState !== 'finished') {  // ✅ 再次檢查
-                    console.log(`🤖 AI ${currentPlayer.name} 開始打牌`); 
+                if (this.gameState !== 'finished') {
                     this.aiDiscard(currentPlayer); 
                 }
             }, 1000);
+        } else {
+            // 🌟 真人玩家開啟伺服器端 17 秒倒數計時 (容忍前端 15秒 + 2秒網路延遲)
+            if (this.turnTimer) clearTimeout(this.turnTimer);
+            this.turnTimer = setTimeout(() => {
+                if (this.gameState === 'playing' && this.currentTurn === currentPlayer.seatIndex) {
+                    console.log(`⏳ 玩家 ${currentPlayer.name} 出牌超時，強制轉為託管！`);
+                    currentPlayer.isAFK = true;
+                    this.broadcastGameMessage(`玩家 ${currentPlayer.name} 閒置超時，已轉為自動託管`, 'system');
+                    this.broadcastPlayerState();
+                    this.aiDiscard(currentPlayer);
+                }
+            }, (this.settings.timeLimit || 15) * 1000 + 2000);
         }
-   } finally { 
+   } finally {
         // 🌟 修正：立即解除鎖定，不要用 500ms 的 setTimeout 導致 auto-discard 被吃掉！
         this._isNextTurnProcessing = false; 
     }
@@ -2477,17 +2517,20 @@ endGame(reason = 'normal') {
     }
     this.broadcastGameMessage(message);
 
-    const finalScores = [];
+   const finalScores = [];
     for (let player of this.players.values()) { 
         finalScores.push({ name: player.name, score: player.score });
-        if (player.isAI) player.isReadyNext = true; // AI 自動準備下一局
+        
+        // 🌟 核心修正：遊戲結束時，將所有真人玩家的「準備狀態」強行拔除！
+        // 這樣下一局必須「每個人」都真正按下確認，才不會被別人偷跑！
+        player.isReady = player.isAI ? true : false; 
     }
     
     io.to(this.roomId).emit('gameEnd', { reason, scores: finalScores });
     this.broadcastGameState();
     
-    // 🌟🌟🌟 最關鍵的這一行補回來了！強制廣播無碼的真實手牌給 Unity 攤牌！
-    this.broadcastPlayerState(); 
+    // 🌟🌟🌟 強制廣播無碼的真實手牌給 Unity 攤牌！
+    this.broadcastPlayerState();
   }
 // 🌟 新增：開始下一局
   startNextRound() {
@@ -3199,8 +3242,24 @@ io.on('connection', (socket) => {
         const room = gameManager.getPlayerRoom(socket.id);
         if (!room) return;
         if (room.gameState !== 'playing') return;
+        
         const currentPlayer = room.getCurrentPlayer();
-        if (!currentPlayer || currentPlayer.socketId !== socket.id) { console.log(`❌ 不是你的回合！當前回合: ${room.currentTurn}`); return; }
+        if (!currentPlayer || currentPlayer.socketId !== socket.id) { 
+            console.log(`❌ 不是你的回合！當前回合: ${room.currentTurn}`); 
+            return; 
+        }
+if (currentPlayer.isAFK) {
+            currentPlayer.isAFK = false;
+        }
+        // ==========================================
+        // 🌟 核心防禦 1：如果這回合已經出過牌了，絕對不允許再出第二次！
+        // 徹底阻斷因為超時與手動點擊同時發生造成的「雙重出牌」
+        // ==========================================
+        if (currentPlayer.hasDiscarded) {
+            console.log(`🛡️ 攔截連點：玩家 ${currentPlayer.name} 已經出過牌了！`);
+            return;
+        }
+
         const tileId = tileData.id;
         if (!tileId) return;
         console.log(`玩家 ${currentPlayer.name} 嘗試打出 tileId: ${tileId}`);
@@ -3222,7 +3281,18 @@ io.on('connection', (socket) => {
         }
     } catch (error) { console.error('playTile 錯誤:', error); }
   });
-
+// 🌟 玩家點擊畫面，解除託管
+  socket.on('cancelAFK', () => {
+      const room = gameManager.getPlayerRoom(socket.id);
+      if (!room) return;
+      const player = room.players.get(socket.id);
+      if (player && player.isAFK) {
+          player.isAFK = false;
+          console.log(`🧑 玩家 ${player.name} 解除託管，重掌控制權`);
+          room.broadcastGameMessage(`玩家 ${player.name} 回到遊戲`, 'system');
+          room.broadcastPlayerState();
+      }
+  });
   socket.on('drawTile', (data) => {
     console.log('收到 drawTile 事件');
     try {
@@ -3403,42 +3473,63 @@ socket.on('disconnect', () => {
 
 // 🌟 核心處理函數：玩家離開時的 AI 接管邏輯
 function handlePlayerLeave(socket) {
-    const roomId = socket.roomId; // 假設你把 roomId 存在 socket 上
-    if (!roomId) return;
-
-    const room = rooms.get(roomId);
+    // 🌟 核心修正 1：透過 gameManager 來找房間，因為 socket.roomId 根本不存在！
+    const room = gameManager.getPlayerRoom(socket.id);
     if (!room) return;
 
-    // 1. 找到這個退出的玩家
-    const player = room.players.find(p => p.socketId === socket.id);
+    const roomId = room.roomId;
+
+    // 🌟 核心修正 2：Map 物件必須用 .get，不能用 .find！
+    const player = room.players.get(socket.id);
     if (player) {
         console.log(`🚪 玩家 ${player.name} 退出遊戲，轉交 AI 託管。`);
         
-        // 2. 標記為離線與 AI 託管！
+        // 1. 標記為離線與 AI 託管！
         player.isOnline = false;
         player.isAI = true; 
+        
+        // 🌟 斷線轉 AI 後，強制將他設為「已準備」，這樣就不會卡住還在結算畫面的其他玩家！
+        player.isReady = true; 
         
         // 讓該 socket 真正離開 socket.io 的房間
         socket.leave(roomId);
 
-        // 3. 檢查房間裡還有沒有「真人」？
-        const humanCount = room.players.filter(p => p.isOnline && !p.isAI).length;
+        // 2. 檢查房間裡還有沒有「真人」？
+        let humanCount = 0;
+        for (let p of room.players.values()) {
+            if (p.isOnline && !p.isAI) humanCount++;
+        }
         
         if (humanCount === 0) {
-            // 如果全部真人都不在了，為了節省伺服器資源，直接解散房間
             console.log(`🛑 房間 ${roomId} 無真人玩家，強制結束遊戲並釋放資源。`);
-            rooms.delete(roomId);
+            gameManager.rooms.delete(roomId);
             return;
         }
 
-        // 4. 廣播給其他還在的玩家：有人變成 AI 了 (更新頭像或狀態)
+        // 3. 廣播給其他還在的玩家：有人變成 AI 了
         room.broadcastGameState();
 
-        // 5. 防呆：如果剛好「正在輪到」這個退出的玩家出牌，立刻觸發 AI 自動打牌！
-        if (room.currentTurn === player.seatIndex) {
+        // 4. 防呆：如果剛好「正在輪到」這個退出的玩家出牌，立刻觸發 AI 自動打牌！
+        if (room.currentTurn === player.seatIndex && room.gameState === 'playing') {
             console.log(`🤖 輪到剛退出的 AI 玩家，立刻觸發 AI 出牌邏輯...`);
-            // 這裡呼叫你原本寫好的 AI 出牌邏輯
-            // 例如: handleAITurn(room, player); 
+            room.aiDiscard(player); 
+        }
+        
+        // 5. 斷線救援：如果這時候剛好在結算畫面，且其他真人都按確認了，AI 化後自動幫他補按發車！
+        if (room.gameState === 'finished' || room.gameState === 'summary') {
+            let allReady = true;
+            for (let p of room.players.values()) {
+                if (!p.isReady) { allReady = false; break; }
+            }
+            if (allReady && room.gameState === 'finished') {
+                console.log(`♻️ [斷線救援] 剩餘玩家皆已準備，自動開啟新局...`);
+                room.startNextRound();
+            }
+        }
+        
+        // 6. 操作救援：如果他在等待「吃碰槓」途中斷線，幫他直接送出 Pass，以免卡死大家
+        if (room.waitingForAction && room.waitingForAction.includes(socket.id)) {
+            handlePlayerAction({ id: socket.id }, 'pass');
         }
     }
 }

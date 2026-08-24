@@ -5128,12 +5128,17 @@ function checkHunLaoTouShiSanYao(hand, melds) {
  * @returns {number} 暗刻數量
  */
 /**
- * 🌟 精確計算暗刻（排除出銃牌與明碰）
+ * 🌟 精確計算暗刻（排除出銃牌與明碰，但所有槓牌皆算暗刻）
  */
 function countAnKe(hand, melds, winType = null, winTile = null) {
     let anKeCount = 0;
     for (let m of melds) {
-        if (m && (m.type === 'anKong' || m.type === 'anGang')) anKeCount++;
+        // 🌟 核心修正：不管是 暗槓(anKong/anGang)、明槓(mingKong/kong)、加槓/補槓(jiaKong/buGang)，一律無條件加計為暗刻！
+        if (m && (m.type === 'anKong' || m.type === 'anGang' || 
+                  m.type === 'mingKong' || m.type === 'kong' || 
+                  m.type === 'jiaKong' || m.type === 'buGang')) {
+            anKeCount++;
+        }
     }
     
     const handCounts = {};
