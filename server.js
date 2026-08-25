@@ -1666,7 +1666,6 @@ tingPlayer(socketId) {
     if (!player) return { success: false, reason: '玩家不存在' };
     if (player.isTing) return { success: false, reason: '已經叮牌了' };
     
-    // ✅ 改用 checkCanTing（差一張就能胡）
     if (!this.checkCanTing(socketId)) {
         return { success: false, reason: '尚未聽牌，不能叮牌' };
     }
@@ -1676,28 +1675,60 @@ tingPlayer(socketId) {
     player.tingJiEligible = true;
     player.hasMarkedTingDiscard = false;
 
-    const hasMelds = player.melds.length > 0;
-    const discardCount = this.discardPile.length;
+    // ==========================================
+    // 🏆 嚴格評定叮牌階級 (依照最新規則)
+    // ==========================================
+
+    // 1. 該玩家「自己」有沒有副露 (吃碰明槓)？
+    const hasNoMelds = player.melds.length === 0;
+
+    // 2. 計算該玩家「歷史總共打過幾張牌？」 
+    // 包含目前還在海底的，以及被別人吃碰槓走的，藉此精準判斷是不是「起手第一圈」
+    let myDiscardCount = 0;
     
-    if (!hasMelds && discardCount === 0 && player.isDealer) {
+    // a. 算海底的
+    for (let t of this.discardPile) {
+        if (t.discardedBy === player.seatIndex) myDiscardCount++;
+    }
+    // b. 算被別人拿走的
+    for (let p of this.players.values()) {
+        for (let m of p.melds) {
+            if (m.fromPlayer === player.seatIndex) myDiscardCount++;
+        }
+    }
+
+    // 3. 所有玩家丟進海底的牌的總數 (系統在吃碰槓時已自動從 discardPile 扣除，所以長度就是準確的數量)
+    const totalDiscardCount = this.discardPile.length;
+
+    // 開始判定
+    if (hasNoMelds && myDiscardCount === 0 && player.isDealer) {
+        // 莊家：自己沒副露，且一發未打 -> 天叮
         player.tingType = 'heaven';
-    } else if (!hasMelds && discardCount === 0 && !player.isDealer) {
+    } 
+    else if (hasNoMelds && myDiscardCount === 0 && !player.isDealer) {
+        // 閒家：自己沒副露，且一發未打 -> 地叮
         player.tingType = 'earth';
-    } else if (discardCount <= 5) {
+    } 
+    else if (totalDiscardCount <= 5) {
+        // 海底總數 (不計副露) 在 5 張以內 -> 5子叮
         player.tingType = 'five';
-    } else if (discardCount <= 10) {
+    } 
+    else if (totalDiscardCount <= 10) {
+        // 海底總數 (不計副露) 在 10 張以內 -> 10子叮
         player.tingType = 'ten';
-    } else {
+    } 
+    else {
+        // 其他情況 -> 普通叮牌
         player.tingType = 'normal';
     }
     
-    console.log(`tingPlayer: isTing=${player.isTing}, tingType=${player.tingType}`);
+    console.log(`tingPlayer: isTing=${player.isTing}, tingType=${player.tingType}, myDiscardCount=${myDiscardCount}, totalDiscardCount=${totalDiscardCount}`);
     
     this.broadcastGameMessage(`${player.name} 叮牌！`, 'ting');
     this.broadcastPlayerState();
     
     return { success: true };
-}
+  }
 getTingTypeName(type) {
     const names = {
         'heaven': '天叮',
