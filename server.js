@@ -2270,14 +2270,25 @@ aiDiscard(player) {
   }
  fillWithAI() {
     const aiNames = ['小明', '小華', '小美', '阿強'];
+    
+    // 🌟 這裡填入你 Unity 裡面總共有幾張頭像照片 (例如: 5)
+    const totalAvatars = 5; 
+
     let aiIndex = 0;
     for (let seatIndex = 0; seatIndex < 4; seatIndex++) {
         const player = this.getPlayerBySeatIndex(seatIndex);
         if (!player) {
             const aiSocketId = `ai_${this.roomId}_${seatIndex}`;
+            
+            // 🌟 讓 AI 隨機抽一個頭像編號 (例如產生 0 ~ 4 的隨機整數)
+            const randomAvatarId = Math.floor(Math.random() * totalAvatars);
+            
+            // 🌟 把原本的名字加上暗號，變成例如 "小明|2"
+            const aiFinalName = `${aiNames[aiIndex % aiNames.length]}|${randomAvatarId}`;
+
             const aiPlayer = { 
                 socketId: aiSocketId, id: aiSocketId, 
-                name: aiNames[aiIndex % aiNames.length], 
+                name: aiFinalName, // ✅ 這裡把原本單純的名字，換成有暗號的名字
                 seatIndex, hand: [], melds: [], flowers: [], score: 0, 
                 isReady: true, isOnline: true, isDealer: false, 
                 hasWon: false, hasDiscarded: false, isAI: true, 
@@ -2292,10 +2303,10 @@ aiDiscard(player) {
             this.players.set(aiSocketId, aiPlayer);
             this.playerOrder[seatIndex] = aiSocketId;
             this.roomStats.set(aiSocketId, { winCount: 0, selfDrawCount: 0, chongCount: 0, totalInstantPayouts: 0 });
-    aiIndex++;
+            aiIndex++;
         }
     }
-}
+  }
   startGame() {
     if (this.gameState !== 'waiting') return false;
     if (!this.allPlayersReady()) return false;
