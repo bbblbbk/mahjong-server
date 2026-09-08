@@ -1808,7 +1808,8 @@ console.log(`isSelfDraw: ${isSelfDraw}, winTile: ${winTile ? winTile.value + win
                 discardCount: this.discardPile.length,
                 dealerConsecutive: this.dealerConsecutive || 0,
                 // 🌟 核心修正
-                isDiscarderDealer: (winTile && winTile.discardedBy !== undefined) ? (winTile.discardedBy === this.dealer) : false
+                isDiscarderDealer: (winTile && winTile.discardedBy !== undefined) ? (winTile.discardedBy === this.dealer) : false,
+                wallCount: this.wall.length
             }
     }, customRules);
     
@@ -2718,7 +2719,8 @@ executeMultiWin() {
                 discardCount: this.discardPile.length,
                 dealerConsecutive: this.dealerConsecutive || 0,
                 // 🌟 核心修正
-                isDiscarderDealer: (this.lastDiscard && this.lastDiscard.discardedBy !== undefined) ? (this.lastDiscard.discardedBy === this.dealer) : false
+                isDiscarderDealer: (this.lastDiscard && this.lastDiscard.discardedBy !== undefined) ? (this.lastDiscard.discardedBy === this.dealer) : false,
+                wallCount: this.wall.length
             }
         }, customRules); // ✅ 補上第二個參數);
 
@@ -3466,25 +3468,38 @@ socket.on('selfWin', (data) => {
         const player = room.players.get(socket.id);
         if (player) player.isReady = true;
 
-        // 🌟 核心修正：自動將房間內的所有 AI 玩家也一併設為「已準備」！
-        // 這樣真人一點確認，AI 就會秒速陪同起跑，絕對不卡局！
+        // 2. 自動將房間內的所有 AI 玩家設為已準備
         for (let [sid, p] of room.players) {
             if (p.isAI) p.isReady = true;
         }
 
-        // 2. 檢查是否全體成員都準備就緒了
+        // 3. 檢查還有誰沒準備
         let allReady = true;
+        let waitingList = [];
         for (let [sid, p] of room.players) {
             if (!p.isReady) {
                 allReady = false;
-                break;
+                waitingList.push(p.name);
             }
         }
 
-        // 3. 如果全員到齊，立刻引爆開局發牌引擎，挺進下一局！
+        // 4. 執行推進邏輯
         if (allReady) {
-            console.log(`♻️ [全員已準備] 正在為房間 ${room.roomId} 開啟新一局對局...`);
-            room.startNextRound();
+            if (room.forceStartTimer) { clearTimeout(room.forceStartTimer); room.forceStartTimer = null; }
+            room.startNextRound(); // 全員到齊，立刻推進！
+        } else {
+            // 🌟 防呆救援：如果有人沒按，啟動 15 秒強制發車倒數
+            if (!room.forceStartTimer) {
+                room.broadcastGameMessage(`等待 ${waitingList.join(', ')} 確認... (15秒後強制繼續)`, 'system');
+                
+                room.forceStartTimer = setTimeout(() => {
+                    room.forceStartTimer = null;
+                    if (room.gameState === 'finished' || room.gameState === 'summary') {
+                        room.broadcastGameMessage("⏳ 等待超時，系統強制推進！", 'system');
+                        room.startNextRound();
+                    }
+                }, 15000);
+            }
         }
     } catch (error) { console.error('下一局準備處理錯誤:', error); }
   });

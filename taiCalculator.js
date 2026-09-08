@@ -5811,18 +5811,28 @@ try {
     
     // 11. 海底撈月等
     try {
-      if (rules.handPatterns?.lastTileDraw?.enabled && extraInfo.isLastTileDraw) {
+      // 🌟 核心修正：讀取從 server.js 傳來的剩餘牌數
+      const isWallEmpty = (extraInfo && extraInfo.wallCount === 0);
+
+      // 海底撈月 (牌牆空了，且是自摸)
+      if (rules.handPatterns?.lastTileDraw?.enabled && (extraInfo.isLastTileDraw || (isWallEmpty && winType === 'selfDraw'))) {
         totalTai += rules.handPatterns.lastTileDraw.tai;
         taiDetails.push({ name: rules.handPatterns.lastTileDraw.name, tai: rules.handPatterns.lastTileDraw.tai });
       }
-      if (rules.handPatterns?.lastTileDrawOneTong?.enabled && extraInfo.isLastTileDrawOneTong) {
+      
+      // 海底撈月-一筒特別版 (如果有開啟此特殊賽制)
+      if (rules.handPatterns?.lastTileDrawOneTong?.enabled && (extraInfo.isLastTileDrawOneTong || (isWallEmpty && winType === 'selfDraw' && extraInfo.winTile?.value === '1' && extraInfo.winTile?.suit === 'tong'))) {
         totalTai += rules.handPatterns.lastTileDrawOneTong.tai;
         taiDetails.push({ name: rules.handPatterns.lastTileDrawOneTong.name, tai: rules.handPatterns.lastTileDrawOneTong.tai });
       }
-      if (rules.handPatterns?.lastTileDiscard?.enabled && extraInfo.isLastTileDiscard) {
+      
+      // 河底撈魚 (牌牆空了，且是胡別人最後打出的那張牌)
+      if (rules.handPatterns?.lastTileDiscard?.enabled && (extraInfo.isLastTileDiscard || (isWallEmpty && winType === 'discard'))) {
         totalTai += rules.handPatterns.lastTileDiscard.tai;
         taiDetails.push({ name: rules.handPatterns.lastTileDiscard.name, tai: rules.handPatterns.lastTileDiscard.tai });
       }
+      
+      // 搶槓
       if (rules.handPatterns?.robKong?.enabled && extraInfo.isRobKong) {
         totalTai += rules.handPatterns.robKong.tai;
         taiDetails.push({ name: rules.handPatterns.robKong.name, tai: rules.handPatterns.robKong.tai });
