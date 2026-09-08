@@ -755,12 +755,7 @@ processPulling(winnerSeat, loserSeat, currentScore, isSelfDraw) {
         remainingCount: this.wall.length
     };
     io.to(this.roomId).emit('tilePlayed', tileData);
-    io.to(this.roomId).emit('gameStateUpdate', {
-        roomId: this.roomId, gameState: this.gameState, currentTurn: this.currentTurn,
-        dealer: this.dealer, round: this.round,
-        discardPile: this.discardPile, lastDiscard: this.lastDiscard,
-        wallCount: this.wall.length, waitingForAction: this.waitingForAction
-    });
+   
     this.broadcastPlayerState();
     this.checkActionsAfterDiscard(socketId, tile);
     return { success: true, tile: tile };
