@@ -2381,7 +2381,19 @@ aiDiscard(player) {
               this.exchangeData.clear();
               
               this.exchangeDieRoll = Math.floor(Math.random() * 6) + 1;
-              if (this.exchangeDieRoll === 1) this.exchangeRequiredCount = 0; 
+              if (this.exchangeDieRoll === 1) {
+            // 🌟 尋找當前莊家
+            const dealerPlayer = Array.from(this.players.values()).find(p => p.seatIndex === this.dealer);
+            
+            if (dealerPlayer && dealerPlayer.isAI) {
+                // AI 莊家特權：立刻隨機決定換 3~6 張牌
+                this.exchangeRequiredCount = Math.floor(Math.random() * 4) + 3;
+                this.broadcastGameMessage(`莊家 (AI) 擲出 1 點，決定全場換 ${this.exchangeRequiredCount} 張牌！`, 'system');
+            } else {
+                // 真人莊家：設為 0，等待莊家客戶端傳送決定
+                this.exchangeRequiredCount = 0;
+            }
+        }
               else if (this.exchangeDieRoll === 2 || this.exchangeDieRoll === 3) this.exchangeRequiredCount = 3;
               else this.exchangeRequiredCount = this.exchangeDieRoll;
 
@@ -2391,9 +2403,12 @@ aiDiscard(player) {
               this.broadcastGameState();
               this.broadcastPlayerState();
               
-              for (let player of this.players.values()) {
+             for (let player of this.players.values()) {
                   if (player.isAI) {
-                      setTimeout(() => this.aiSubmitExchange(player), 1000 + Math.random() * 1500);
+                      // 🌟 修正：只有當換牌數確定了，或者是 AI 自己當莊家時，才允許 AI 出牌！
+                      if (this.exchangeRequiredCount !== 0 || player.seatIndex === this.dealer) {
+                          setTimeout(() => this.aiSubmitExchange(player), 1000 + Math.random() * 1500);
+                      }
                   } else {
                       io.to(player.socketId).emit('yourHand', { hand: player.hand, flowers: player.flowers, seat: player.seatIndex });
                   }
@@ -2422,12 +2437,21 @@ aiDiscard(player) {
   submitExchangeTiles(socketId, tileIds) {
       if (this.gameState !== 'exchanging') return { success: false, reason: '不在換牌階段' };
       
-      // 🌟 數量驗證
-      if (this.exchangeRequiredCount === 0) {
-          if (tileIds.length < 3 || tileIds.length > 6) return { success: false, reason: '請選擇 3 到 6 張牌' };
-      } else {
-          if (tileIds.length !== this.exchangeRequiredCount) return { success: false, reason: `必須選擇 ${this.exchangeRequiredCount} 張牌` };
-      }
+      // 🌟 莊家決定數量的特權
+        if (this.exchangeRequiredCount === 0 && player.seatIndex === this.dealer) {
+            this.exchangeRequiredCount = tileIds.length; 
+            this.broadcastGameMessage(`莊家決定全場換 ${this.exchangeRequiredCount} 張牌！請閒家開始選牌。`, 'system');
+            
+            // 🌟 喚醒原本在發呆等待的 AI 閒家，讓他們開始選牌
+            for (let p of this.players.values()) {
+                if (p.isAI && p.seatIndex !== this.dealer) {
+                    setTimeout(() => this.aiSubmitExchange(p), 1000 + Math.random() * 1500);
+                }
+            }
+
+            // 立刻廣播給其他閒家，解鎖他們的按鈕
+            this.broadcastGameState(); 
+        }
       
       const player = this.players.get(socketId);
       if (this.exchangeData.has(socketId)) return { success: false, reason: '已提交過換牌' };
