@@ -1871,7 +1871,8 @@ console.log(`isSelfDraw: ${isSelfDraw}, winTile: ${winTile ? winTile.value + win
         winType: isSelfDraw ? 'selfDraw' : 'discard', 
         discarderSeat, 
         taiResult: result, 
-        finalScore: score 
+        finalScore: score,
+        winnerHand: player.hand
     });
     
     // ✅ 關鍵修正：檢查遊戲是否結束
@@ -2798,7 +2799,8 @@ executeMultiWin() {
         winner: "multi", // 多響標記
         winType: 'discard', 
         discarderSeat, 
-        multiResults: gameResults 
+        multiResults: gameResults,
+        winnerHand: player.hand
     });
 
     this.clearPendingActions();
