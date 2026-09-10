@@ -1859,7 +1859,7 @@ function checkXiaoQiMenQi(hand, melds, flowers = []) {
   const summerFlowers = ['梅', '蘭', '竹', '菊'];
   const hasSpringSet = springFlowers.some(f => flowers.some(fl => fl.value === f));
   const hasSummerSet = summerFlowers.some(f => flowers.some(fl => fl.value === f));
-  if (!hasSpringSet && !hasSummerSet) return false;
+  if (!hasSpringSet || !hasSummerSet) return false;
   
   // 檢查是否至少有一種只有眼牌（2張）
   const allTiles = [...hand];
@@ -1904,7 +1904,7 @@ function checkDaQiMenQi(hand, melds, flowers = []) {
   const summerFlowers = ['梅', '蘭', '竹', '菊'];
   const hasSpringSet = springFlowers.some(f => flowers.some(fl => fl.value === f));
   const hasSummerSet = summerFlowers.some(f => flowers.some(fl => fl.value === f));
-  if (!hasSpringSet && !hasSummerSet) return false;
+  if (!hasSpringSet || !hasSummerSet) return false;
   
   // 檢查每種是否至少有3張（順子或刻子）
   const allTiles = [...hand];
