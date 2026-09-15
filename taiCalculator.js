@@ -308,21 +308,35 @@ function checkOnlyWaitAndPairWait(hand, melds, winTile, winType, allMelds, eyeTi
         if (res && res.melds && res.melds.length === 5 && res.eyeTile) winningTiles.push(`honor_${h}`);
     }
 
-    const isOnlyWait = winningTiles.length === 1;
+   const isOnlyWait = winningTiles.length === 1;
 
     let isPairWait = false;
-    if (winningTiles.length === 2) {
-        const t1 = winningTiles[0].split('_');
-        const t2 = winningTiles[1].split('_');
-        const c1 = readyHand.filter(t => t.suit === t1[0] && t.value === t1[1]).length;
-        const c2 = readyHand.filter(t => t.suit === t2[0] && t.value === t2[1]).length;
-        if (c1 === 2 && c2 === 2) isPairWait = true;
+    // 🌟 核心修正：更精準的對碰判定！不再盲目算數量，直接檢查拆解出的胡牌面子！
+    if (winningTiles.length === 2 && allMelds && eyeTile) {
+        const winVal = parseInt(winTile.value);
+        const winSuit = winTile.suit;
+        
+        // 檢查贏的這張牌，是否在最終拆解出的面子裡完美形成了一組「刻子」
+        const formsPong = allMelds.some(m => 
+            ['pong', 'anKong', 'mingKong', 'kong'].includes(m.type) && 
+            m.tiles && m.tiles.length > 0 &&
+            m.tiles[0].suit === winSuit && 
+            (isNaN(winVal) ? m.tiles[0].value === winTile.value : parseInt(m.tiles[0].value) === winVal)
+        );
+        
+        // 檢查眼牌是否剛好是另一個聽牌目標
+        const t1_key = winningTiles[0]; 
+        const t2_key = winningTiles[1];
+        const eye_key = `${eyeTile.suit}_${eyeTile.value}`;
+        
+        if (formsPong && (eye_key === t1_key || eye_key === t2_key)) {
+            isPairWait = true;
+        }
     }
 
     let isFakeOnlyWait = false;
     if (winningTiles.length > 1 && !isPairWait) {
         // 🌟 核心修正：假獨必須「無法形成兩面聽」。
-        // 我們直接去拆解好的 allMelds 裡面找，看這張 winTile 是不是被用在兩面聽的順子裡！
         let isTwoSided = false;
         const winSuit = winTile.suit;
         const winVal = parseInt(winTile.value);

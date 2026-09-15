@@ -199,6 +199,30 @@ this.turnTimer = null;   // 🌟 伺服器打牌倒數計時器
       if (this.actionTimer) { clearTimeout(this.actionTimer); this.actionTimer = null; }
   }
 
+  // 🌟 統一計時引擎：無論是摸牌還是吃碰槓，都會啟動絕對防線！
+  startPlayerTurnTimer(player, aiDelay = 1000) {
+      if (this.turnTimer) clearTimeout(this.turnTimer);
+      
+      if (player.isAI || player.isAFK) {
+          console.log(`🤖 AI/託管 ${player.name} 在 ${aiDelay}ms 後打牌`);
+          this.turnTimer = setTimeout(() => { 
+              if (this.gameState !== 'finished') {
+                  this.aiDiscard(player); 
+              }
+          }, aiDelay);
+      } else {
+          // 🌟 真人玩家開啟伺服器端倒數計時 (容忍前端時間 + 2秒網路延遲)
+          this.turnTimer = setTimeout(() => {
+              if (this.gameState === 'playing' && this.currentTurn === player.seatIndex) {
+                  console.log(`⏳ 玩家 ${player.name} 出牌超時，強制轉為託管！`);
+                  player.isAFK = true;
+                  this.broadcastGameMessage(`玩家 ${player.name} 閒置超時，已轉為自動託管`, 'system');
+                  this.broadcastPlayerState();
+                  this.aiDiscard(player);
+              }
+          }, (this.settings.timeLimit || 15) * 1000 + 2000);
+      }
+  }
 // 🌟 升級版：即時加減分 + 保留拉莊倍數面板
 processPulling(winnerSeat, loserSeat, currentScore, isSelfDraw) {
     const winner = this.getPlayerBySeatIndex(winnerSeat);
@@ -647,6 +671,8 @@ processPulling(winnerSeat, loserSeat, currentScore, isSelfDraw) {
     const player = this.players.get(socketId);
     if (!player) return null;
     if (this.wall.length === 0) { this.endGame('draw'); return null; }
+
+    player.restrictedDiscards = [];
     const tile = this.wall.pop();
     if (tile.type === 'flower') {
       player.flowers.push(tile);
@@ -700,10 +726,21 @@ processPulling(winnerSeat, loserSeat, currentScore, isSelfDraw) {
         }
     }
 
-    // 🌟 2. 確認有這張牌後，再執行 splice 刪除
+    // 🌟 防呆檢查：禁止吃/碰完後，立刻打出相同的牌或同線牌 (食い替え)
+    const tileToCheck = player.hand.find(t => t.id === tileId);
+    if (tileToCheck && player.restrictedDiscards && player.restrictedDiscards.length > 0) {
+        const key = `${tileToCheck.suit}_${tileToCheck.value}`;
+        if (player.restrictedDiscards.includes(key)) {
+            return { success: false, reason: '違規：禁止吃/碰後立刻打出該張牌或同線關聯牌！' };
+        }
+    }
+
     const tileIndex = player.hand.findIndex(t => t.id === tileId);
     if (tileIndex === -1) return { success: false, reason: '手牌中沒有這張牌' };
     const tile = player.hand.splice(tileIndex, 1)[0];
+
+    // ✅ 成功出牌後清空禁打限制
+    player.restrictedDiscards = [];
 
     this.sortHand(player);
     
@@ -1343,6 +1380,8 @@ canFormWinningHand(tiles, melds = []) {
     if (matchingTiles.length < 2) return { success: false };
     player.hand = player.hand.filter(t => !(t.type === tile.type && t.suit === tile.suit && t.value === tile.value) || matchingTiles.indexOf(t) >= 2);
     player.melds.push({ type: 'pong', tiles: [...matchingTiles.slice(0, 2), tile], fromPlayer: this.lastDiscardPlayer });
+    player.restrictedDiscards = [`${tile.suit}_${tile.value}`]; 
+
     this.broadcastGameMessage(`${player.name} 碰了 ${this.getTileDisplayName(tile)}`);
     this.clearPendingActions();
     this.currentTurn = player.seatIndex;
@@ -1375,12 +1414,9 @@ this.discardPile = this.discardPile.filter(t => t.id !== tile.id);    this.lastD
     console.log(`currentTurn: ${this.currentTurn} (${this.getCurrentPlayer()?.name})`);
     console.log(`waitingForAction: ${JSON.stringify(this.waitingForAction)}`);
     
-    if (player.isAI) {
-        setTimeout(() => {
-            console.log(`🤖 AI ${player.name} 碰後打牌`);
-            this.aiDiscard(player);
-        }, 300);
-    }
+  // 🌟 碰牌/吃牌後啟動計時器 (AI 稍微快一點回應)
+    this.startPlayerTurnTimer(player, 300);
+    
     return { success: true };
 }
 playerKong(socketId) {
@@ -1429,11 +1465,8 @@ playerKong(socketId) {
         privateState: this.getPrivatePlayerState(socketId) 
     });
     
-    if (player.isAI) {
-        setTimeout(() => {
-            this.aiDiscard(player);
-        }, 300);
-    }
+    // 🌟 碰牌/吃牌後啟動計時器 (AI 稍微快一點回應)
+    this.startPlayerTurnTimer(player, 300);
     return { success: true, drawnTile };
   }
 playerSelfKong(socketId, data) {
@@ -1558,7 +1591,20 @@ refreshAndSendYourTurn(socketId, player, drawnTile) {
     player.hand = player.hand.filter(t => !foundTiles.includes(t));
 // 🌟 將自己手上的兩張牌先排序，然後強制把上家打的牌 (tile) 塞在正中間！
     foundTiles.sort((a, b) => parseInt(a.value) - parseInt(b.value));
-    const chowTiles = [foundTiles[0], tile, foundTiles[1]];    player.melds.push({ type: 'chow', tiles: chowTiles, fromPlayer: this.lastDiscardPlayer });
+    const chowTiles = [foundTiles[0], tile, foundTiles[1]];    
+    
+    player.melds.push({ type: 'chow', tiles: chowTiles, fromPlayer: this.lastDiscardPlayer });
+
+    // 🌟 核心防呆：記錄吃牌後的禁打限制 (Kuikae / 換牌禁止)
+    player.restrictedDiscards = [`${tile.suit}_${tile.value}`]; // 絕對禁打剛吃進來的那張
+    if (chowType === 'left' && num - 3 >= 1) {
+        // 用 n-2, n-1 吃 n (例如用 7,8 吃 9)，則禁打 n-3 (禁打 6)
+        player.restrictedDiscards.push(`${tile.suit}_${num - 3}`);
+    } else if (chowType === 'right' && num + 3 <= 9) {
+        // 用 n+1, n+2 吃 n (例如用 2,3 吃 1)，則禁打 n+3 (禁打 4)
+        player.restrictedDiscards.push(`${tile.suit}_${num + 3}`);
+    }
+
     this.broadcastGameMessage(`${player.name} 吃了 ${this.getTileDisplayName(tile)}`);
     this.clearPendingActions();
     this.currentTurn = player.seatIndex;
@@ -1587,12 +1633,8 @@ refreshAndSendYourTurn(socketId, player, drawnTile) {
         privateState: this.getPrivatePlayerState(socketId) 
     });
     
-    if (player.isAI) {
-        setTimeout(() => {
-            console.log(`🤖 AI ${player.name} 吃後打牌`);
-            this.aiDiscard(player);
-        }, 300);
-    }
+    // 🌟 碰牌/吃牌後啟動計時器 (AI 稍微快一點回應)
+    this.startPlayerTurnTimer(player, 300);
     return { success: true };
 }
 
@@ -2053,27 +2095,8 @@ console.log(`發送 yourTurn: isTing=${currentPlayer.isTing}`);
         this.broadcastGameState(); 
         this.broadcastPlayerState();
         
-        // AI 自動打牌
-       if (currentPlayer.isAI || currentPlayer.isAFK) {
-            console.log(`🤖 AI/託管 ${currentPlayer.name} 在 1000ms 後打牌`);
-            setTimeout(() => { 
-                if (this.gameState !== 'finished') {
-                    this.aiDiscard(currentPlayer); 
-                }
-            }, 1000);
-        } else {
-            // 🌟 真人玩家開啟伺服器端 17 秒倒數計時 (容忍前端 15秒 + 2秒網路延遲)
-            if (this.turnTimer) clearTimeout(this.turnTimer);
-            this.turnTimer = setTimeout(() => {
-                if (this.gameState === 'playing' && this.currentTurn === currentPlayer.seatIndex) {
-                    console.log(`⏳ 玩家 ${currentPlayer.name} 出牌超時，強制轉為託管！`);
-                    currentPlayer.isAFK = true;
-                    this.broadcastGameMessage(`玩家 ${currentPlayer.name} 閒置超時，已轉為自動託管`, 'system');
-                    this.broadcastPlayerState();
-                    this.aiDiscard(currentPlayer);
-                }
-            }, (this.settings.timeLimit || 15) * 1000 + 2000);
-        }
+        // 🌟 呼叫統一計時引擎
+        this.startPlayerTurnTimer(currentPlayer, 1000);
    } finally {
         // 🌟 修正：立即解除鎖定，不要用 500ms 的 setTimeout 導致 auto-discard 被吃掉！
         this._isNextTurnProcessing = false; 
@@ -2140,7 +2163,7 @@ aiDiscard(player) {
       this.discardTile(player.socketId, tileIdToDiscard);
   }
 
- calculateBestDiscard(player) {
+calculateBestDiscard(player) {
       const hand = player.hand;
       let lowestScore = Infinity;
       let bestDiscards = [];
@@ -2148,8 +2171,49 @@ aiDiscard(player) {
       // 🛡️ 戰術核心 1：掃描全場，看看是否已經有「其他玩家」宣告叮牌了？
       const isOpponentTing = Array.from(this.players.values()).some(p => p.socketId !== player.socketId && p.isTing);
 
+      // ====================================================
+      // 🔮 戰術核心 2：【AI 升級】大牌傾向掃描器
+      // ====================================================
+      let suitCounts = { 'wan': 0, 'tong': 0, 'tiao': 0, 'honor': 0 };
+      let pairCount = 0;
+      let dominantSuit = null;
+
+      // 統計花色與對子數量
+      const counts = {};
+      for (let t of hand) {
+          if (t.type === 'honor') suitCounts['honor']++;
+          else suitCounts[t.suit]++;
+
+          const key = `${t.suit}_${t.value}`;
+          counts[key] = (counts[key] || 0) + 1;
+      }
+      for (let c of Object.values(counts)) {
+          if (c >= 2) pairCount++;
+      }
+
+      // 找出最多張的數字花色
+      let maxSuitCount = 0;
+      for (let suit of ['wan', 'tong', 'tiao']) {
+          if (suitCounts[suit] > maxSuitCount) {
+              maxSuitCount = suitCounts[suit];
+              dominantSuit = suit;
+          }
+      }
+
+      // 判斷是否具備做大牌的潛力
+      // 1. 清一色/混一色潛力：主要花色 + 字牌的數量 >= 8 張
+      const isFlushTendency = (maxSuitCount + suitCounts['honor'] >= 8) && maxSuitCount > 0;
+      // 2. 對對糊潛力：手牌對子 + 已碰/槓的副露數量 >= 3 組
+      const existingPongs = player.melds.filter(m => m.type !== 'chow').length;
+      const isPongTendency = (pairCount + existingPongs >= 3);
+      // ====================================================
+
       // 🎯 策略 A 【一向聽進攻】：如果打出某張牌能立刻聽牌，AI 依然會果斷選擇聽牌！
       for (let i = 0; i < hand.length; i++) {
+          // 🌟 絕對跳過禁止打出的牌
+          const key = `${hand[i].suit}_${hand[i].value}`;
+          if (player.restrictedDiscards && player.restrictedDiscards.includes(key)) continue;
+
           const remaining = hand.filter((_, idx) => idx !== i);
           let canTingAfterDiscard = false;
           
@@ -2175,10 +2239,14 @@ aiDiscard(player) {
           }
       }
 
-      // 🎯 策略 B 【最大機率入章 / 防守安全牌】：掃描全手牌，找出價值最低（或最安全）的牌丟掉
+      // 🎯 策略 B 【最大機率入章 + 貪番數 + 防守安全牌】：找出綜合價值最低的牌丟掉
       for (let i = 0; i < hand.length; i++) {
-          // 將「對手是否聽牌」的警報傳給評分器
-          let score = this.evaluateTileImportance(hand, i, isOpponentTing);
+          // 🌟 絕對跳過禁止打出的牌
+          const key = `${hand[i].suit}_${hand[i].value}`;
+          if (player.restrictedDiscards && player.restrictedDiscards.includes(key)) continue;
+
+          // 🌟 將「大牌傾向」傳給評分器
+          let score = this.evaluateTileImportance(hand, i, isOpponentTing, dominantSuit, isFlushTendency, isPongTendency);
           
           if (score < lowestScore) {
               lowestScore = score;
@@ -2188,20 +2256,22 @@ aiDiscard(player) {
           }
       }
       
+      if (bestDiscards.length === 0) return 0;
+      
       // 隨機從最低分（最廢/最安全）的牌中挑一張丟
       return bestDiscards[Math.floor(Math.random() * bestDiscards.length)];
   }
 
   // ========================================================
-  // 🧠 升級版核心：AI 留牌與防守評分器
+  // 🧠 升級版核心：AI 留牌與防守評分器 (加入貪番數邏輯)
   // ========================================================
-  evaluateTileImportance(hand, index, isOpponentTing = false) {
+  evaluateTileImportance(hand, index, isOpponentTing = false, dominantSuit = null, isFlushTendency = false, isPongTendency = false) {
       const tile = hand[index];
       let score = 0;
       const sameSuit = hand.filter((t, i) => i !== index && t.suit === tile.suit && t.type === tile.type);
 
       // ----------------------------------------------------
-      // 【進攻價值評估】(原本的邏輯：搭子、對子越完整分數越高)
+      // 【基礎進攻價值評估】(搭子、對子越完整分數越高)
       // ----------------------------------------------------
       if (tile.type === 'honor') {
           const identicalCount = sameSuit.filter(t => t.value === tile.value).length;
@@ -2237,17 +2307,43 @@ aiDiscard(player) {
       }
 
       // ----------------------------------------------------
-      // 🛡️ 【終極防守模式】(有人聽牌時強制啟動)
+      // 💰 【AI 升級：貪心做大牌模式】(僅在安全情況下主導)
+      // ----------------------------------------------------
+      if (!isOpponentTing) {
+          // 1. 清一色 / 混一色 傾向
+          if (isFlushTendency) {
+              if (tile.type === 'number' && tile.suit === dominantSuit) {
+                  score += 150; // 絕對保留主要花色的牌
+              } else if (tile.type === 'honor') {
+                  score += 80;  // 混一色需要字牌，加分保留
+              } else {
+                  score -= 200; // 瘋狂扣分，優先把非主要花色的牌當垃圾丟掉！
+              }
+          }
+
+          // 2. 對對糊 傾向
+          if (isPongTendency) {
+              const identicalCount = sameSuit.filter(t => t.value === tile.value).length;
+              if (identicalCount >= 1) {
+                  score += 120; // 有對子或刻子的牌加倍保護
+              } else {
+                  score -= 50;  // 孤張牌扣分，盡早丟掉去碰牌
+              }
+          }
+      }
+
+      // ----------------------------------------------------
+      // 🛡️ 【終極防守模式】(有人聽牌時強制啟動，完全輾壓貪心分數)
       // ----------------------------------------------------
       if (isOpponentTing) {
           // 檢查這張牌是否曾經被丟到海底？(現物 / 絕對安全牌)
           const isDiscarded = this.discardPile.some(t => t.suit === tile.suit && t.value === tile.value);
 
           if (isDiscarded) {
-              // 🌟 這是海底出現過的「安全牌」！把它的保留分數扣到極低，AI 會瘋狂優先丟它保命！
+              // 🌟 這是海底出現過的「安全牌」！扣到極低分，AI 會瘋狂優先丟它保命！
               score -= 2000; 
           } else {
-              // ⚠️ 這是場上沒出現過的「危險生張」！依據點炮危險程度大幅增加保留分數，死都不丟！
+              // ⚠️ 這是場上沒出現過的「危險生張」！大幅增加保留分數，死都不丟！
               if (tile.type === 'number') {
                   const val = parseInt(tile.value);
                   // 4, 5, 6 中張最容易點炮，視為核彈級危險
@@ -2555,8 +2651,9 @@ aiDiscard(player) {
       }
       io.to(this.roomId).emit('turnChange', { seat: this.currentTurn });
       
-      if (dealerPlayer && dealerPlayer.isAI) {
-          setTimeout(() => { this.aiDiscard(dealerPlayer); }, 1500);
+      // 🌟 開局莊家啟動計時器
+      if (dealerPlayer) {
+          this.startPlayerTurnTimer(dealerPlayer, 1500);
       }
   }
 endGame(reason = 'normal') {
@@ -3328,21 +3425,31 @@ if (currentPlayer.isAFK) {
         const tileId = tileData.id;
         if (!tileId) return;
         console.log(`玩家 ${currentPlayer.name} 嘗試打出 tileId: ${tileId}`);
-        const result = room.discardTile(socket.id, tileId);
+       const result = room.discardTile(socket.id, tileId);
         console.log(`打牌結果: success=${result.success}`);
         
         if (result.success) { 
             room.broadcastGameState(); 
             room.broadcastPlayerState(); 
             
-            // 🌟 核心修正：出牌成功後，立刻把伺服器剛排序好的手牌同步給自己！
-            // 這樣 Unity 就會馬上收到 PrivateStateUpdate，並瞬間把手牌收攏排好。
             socket.emit('privateStateUpdate', { 
                 success: true, 
                 gameState: room.getPublicGameState(), 
                 players: room.getPublicPlayersState(), 
                 privateState: room.getPrivatePlayerState(socket.id) 
             });
+        } else {
+            console.log(`❌ 違規或無效出牌: ${result.reason}`);
+            
+            // 🌟 核心防禦：通知前端出牌失敗，並強制重新同步狀態 (把原本丟到桌上的殘影牌拉回手牌中)
+            socket.emit('gameMessage', { message: result.reason, type: 'system' });
+            socket.emit('privateStateUpdate', { 
+                success: true, 
+                gameState: room.getPublicGameState(), 
+                players: room.getPublicPlayersState(), 
+                privateState: room.getPrivatePlayerState(socket.id) 
+            });
+            socket.emit('gameStateUpdate', room.getPublicGameState());
         }
     } catch (error) { console.error('playTile 錯誤:', error); }
   });
