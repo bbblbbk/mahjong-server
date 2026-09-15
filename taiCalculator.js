@@ -5629,23 +5629,25 @@ try {
             taiDetails.push({ name: rules.handPatterns.menqing.name, tai: rules.handPatterns.menqing.tai });
         }
 
-        // 2. 再判斷叮牌本身的名目
+       // 2. 再判斷叮牌本身的名目
         if (isTing) {
             let tingTai = 0;
             let tingName = '';
 
-            if (extraInfo.tingType === 'five') {
+            // 🌟 修正 1：全面加入 .enabled 開關檢查！沒開啟就絕對不算！
+            if (extraInfo.tingType === 'five' && rules.handPatterns?.fiveTilesTing?.enabled) {
                 // 五子叮保留自己的高番數
                 tingTai = rules.handPatterns.fiveTilesTing.tai; 
                 tingName = rules.handPatterns.fiveTilesTing.name;
-            } else if (extraInfo.tingType === 'ten') {
+            } else if (extraInfo.tingType === 'ten' && rules.handPatterns?.tenTilesTing?.enabled) {
                 // 十子叮保留自己的高番數
                 tingTai = rules.handPatterns.tenTilesTing.tai; 
                 tingName = rules.handPatterns.tenTilesTing.name;
             } else {
-                // 如果是普通叮，且已經拿過「門清叮」了，就不再重複給「普通叮牌」的番數
-                if (!hasMenqingTing) {
-                    tingTai = rules.handPatterns?.ting?.tai || 5;
+                // 🌟 修正 2：普通叮也必須檢查 enabled 開關
+                if (!hasMenqingTing && rules.handPatterns?.ting?.enabled) {
+                    // 🌟 修正 3：使用 ?? 取代 ||。這樣設定為 0 番時，才不會被當成 false 變回 5 番！
+                    tingTai = rules.handPatterns?.ting?.tai ?? 5;
                     tingName = rules.handPatterns?.ting?.name || '叮牌';
                 }
             }

@@ -296,6 +296,16 @@ processPulling(winnerSeat, loserSeat, currentScore, isSelfDraw) {
       }
       return customRules;
   }
+
+  getRewardAmount(key, defaultAmount) {
+      if (this.settings.customTaiTable && this.settings.customTaiTable[key]) {
+          // 如果開關被關閉，直接回傳 0 (不觸發賞罰)
+          if (this.settings.customTaiTable[key].enabled === false) return 0;
+          // 否則回傳玩家設定的底數
+          return parseFloat(this.settings.customTaiTable[key].tai);
+      }
+      return defaultAmount;
+  }
 // 🌟 新增：即時賞罰轉帳引擎（加入 try-catch 防崩潰保護）
   executeInstantPayout(triggerSeat, targetSeats, baseAmount, reason, type) {
       try {
@@ -364,25 +374,28 @@ processPulling(winnerSeat, loserSeat, currentScore, isSelfDraw) {
           if (available[1].length > 0 && available[2].length > 0 && available[3].length > 0 && available[4].length > 0) {
               let selected = null;
               
-              // 優先提取：純一枱花 (梅蘭竹菊)
+              // 優先提取：純一台花 (梅蘭竹菊)
               if (available[1].some(f => f.g === 'hua') && available[2].some(f => f.g === 'hua') && available[3].some(f => f.g === 'hua') && available[4].some(f => f.g === 'hua')) {
                   selected = [available[1].find(f => f.g === 'hua'), available[2].find(f => f.g === 'hua'), available[3].find(f => f.g === 'hua'), available[4].find(f => f.g === 'hua')];
                   for (let f of selected) player.usedFlowerIds.add(f.id);
-                  this.executeInstantPayout(player.seatIndex, [0, 1, 2, 3], 1, '一枱花(梅蘭竹菊)', 'collect');
+                  let amt = this.getRewardAmount('yiTaiHua', 1);
+                  if (amt > 0) this.executeInstantPayout(player.seatIndex, [0, 1, 2, 3], amt, '一台花(梅蘭竹菊)', 'collect');
                   found = true;
               }
-              // 優先提取：純一枱花 (春夏秋冬)
+              // 優先提取：純一台花 (春夏秋冬)
               else if (available[1].some(f => f.g === 'cao') && available[2].some(f => f.g === 'cao') && available[3].some(f => f.g === 'cao') && available[4].some(f => f.g === 'cao')) {
                   selected = [available[1].find(f => f.g === 'cao'), available[2].find(f => f.g === 'cao'), available[3].find(f => f.g === 'cao'), available[4].find(f => f.g === 'cao')];
                   for (let f of selected) player.usedFlowerIds.add(f.id);
-                  this.executeInstantPayout(player.seatIndex, [0, 1, 2, 3], 1, '一枱花(春夏秋冬)', 'collect');
+                  let amt = this.getRewardAmount('yiTaiHua', 1);
+                  if (amt > 0) this.executeInstantPayout(player.seatIndex, [0, 1, 2, 3], amt, '一台花(春夏秋冬)', 'collect');
                   found = true;
               }
-              // 混合提取：一枱草 (任意混搭 1234)
+              // 混合提取：一台草 (任意混搭 1234)
               else {
                   selected = [available[1][0], available[2][0], available[3][0], available[4][0]];
                   for (let f of selected) player.usedFlowerIds.add(f.id);
-                  this.executeInstantPayout(player.seatIndex, [0, 1, 2, 3], 0.5, '一枱草', 'collect');
+                  let amt = this.getRewardAmount('yiTaiCao', 0.5);
+                  if (amt > 0) this.executeInstantPayout(player.seatIndex, [0, 1, 2, 3], amt, '一台草', 'collect');
                   found = true;
               }
           }
@@ -760,26 +773,25 @@ processPulling(winnerSeat, loserSeat, currentScore, isSelfDraw) {
         if (tile.value === chainTile.value && tile.suit === chainTile.suit) {
             // ✅ 成功跟上第四張 -> 觸發 4追
             const firstSeat = chainTile.seatIndex;
-            if (isHonor) this.executeInstantPayout(firstSeat, [0, 1, 2, 3], 1, '4追番子', 'penalize');
-            else this.executeInstantPayout(firstSeat, [0, 1, 2, 3], 2, '4追非番子', 'penalize');
+            if (isHonor) {
+                let amt = this.getRewardAmount('fourZhuiFanZi', 1);
+                if (amt > 0) this.executeInstantPayout(firstSeat, [0, 1, 2, 3], amt, '4追番子', 'penalize');
+            } else {
+                let amt = this.getRewardAmount('fourZhuiFeiFanZi', 2);
+                if (amt > 0) this.executeInstantPayout(firstSeat, [0, 1, 2, 3], amt, '4追非番子', 'penalize');
+            }
             this.consecutiveDiscards = []; // 結算後重置
         } else {
             // ❌ 第四家未能跟牌 -> 觸發 三追 罰第四家
             const currentSeat = player.seatIndex;
-            if (isHonor) this.executeInstantPayout(currentSeat, [0, 1, 2, 3], 0.5, '三追番子', 'penalize');
-            else this.executeInstantPayout(currentSeat, [0, 1, 2, 3], 1, '三追非番子', 'penalize');
-            this.consecutiveDiscards = [{ seatIndex: player.seatIndex, value: tile.value, suit: tile.suit, type: tile.type }];
-        }
-    } else {
-        if (this.consecutiveDiscards.length === 0) {
-            this.consecutiveDiscards.push({ seatIndex: player.seatIndex, value: tile.value, suit: tile.suit, type: tile.type });
-        } else {
-            const prev = this.consecutiveDiscards[this.consecutiveDiscards.length - 1];
-            if (tile.value === prev.value && tile.suit === prev.suit) {
-                this.consecutiveDiscards.push({ seatIndex: player.seatIndex, value: tile.value, suit: tile.suit, type: tile.type });
+            if (isHonor) {
+                let amt = this.getRewardAmount('sanZhuiFanZi', 0.5);
+                if (amt > 0) this.executeInstantPayout(currentSeat, [0, 1, 2, 3], amt, '三追番子', 'penalize');
             } else {
-                this.consecutiveDiscards = [{ seatIndex: player.seatIndex, value: tile.value, suit: tile.suit, type: tile.type }];
+                let amt = this.getRewardAmount('sanZhuiFeiFanZi', 1);
+                if (amt > 0) this.executeInstantPayout(currentSeat, [0, 1, 2, 3], amt, '三追非番子', 'penalize');
             }
+            this.consecutiveDiscards = [{ seatIndex: player.seatIndex, value: tile.value, suit: tile.suit, type: tile.type }];
         }
     }
     this.lastDiscardPlayer = socketId;
@@ -1383,9 +1395,13 @@ canFormWinningHand(tiles, melds = []) {
     player.restrictedDiscards = [`${tile.suit}_${tile.value}`]; 
 
     this.broadcastGameMessage(`${player.name} 碰了 ${this.getTileDisplayName(tile)}`);
-    this.clearPendingActions();
+   this.clearPendingActions();
+    
+    player.hasDiscarded = false; // 🌟 核心修正：強制解除出牌防連點鎖！
     this.currentTurn = player.seatIndex;
-io.to(this.roomId).emit('meldCreated', { seat: player.seatIndex, meld: { type: 'pong', tiles: [...matchingTiles.slice(0, 2), tile], fromPlayer: this.lastDiscardPlayer ? this.players.get(this.lastDiscardPlayer)?.seatIndex : -1 } });
+    io.to(this.roomId).emit('turnChange', { seat: player.seatIndex }); // 🌟 同步更新畫面的回合箭頭！
+    
+    io.to(this.roomId).emit('meldCreated', { seat: player.seatIndex, meld: { type: 'pong', tiles: [...matchingTiles.slice(0, 2), tile], fromPlayer: this.lastDiscardPlayer ? this.players.get(this.lastDiscardPlayer)?.seatIndex : -1 } });
 this.discardPile = this.discardPile.filter(t => t.id !== tile.id);    this.lastDiscard = null; this.lastDiscardPlayer = null;
     this.broadcastGameState(); this.broadcastPlayerState();
     io.to(socketId).emit('privateStateUpdate', { 
@@ -1434,9 +1450,12 @@ playerKong(socketId) {
     this.broadcastGameMessage(`${player.name} 槓了 ${this.getTileDisplayName(tile)}`);
     // 🌟 已經將明槓的即時收錢邏輯移除！
 
-    const drawnTile = this.drawTile(socketId);
+  const drawnTile = this.drawTile(socketId);
     this.clearPendingActions();
+    
+    player.hasDiscarded = false; // 🌟 核心修正：強制解除出牌防連點鎖！
     this.currentTurn = player.seatIndex;
+    io.to(this.roomId).emit('turnChange', { seat: player.seatIndex }); // 🌟 同步更新畫面的回合箭頭！
     
     io.to(this.roomId).emit('meldCreated', { seat: player.seatIndex, meld: { type: 'mingKong', tiles: [...matchingTiles, tile], fromPlayer: this.lastDiscardPlayer ? this.players.get(this.lastDiscardPlayer)?.seatIndex : -1 } });
     this.discardPile = this.discardPile.filter(t => t.id !== tile.id);
@@ -1490,8 +1509,9 @@ playerSelfKong(socketId, data) {
           player.hand = player.hand.filter(t => !(t.type === targetType && t.suit === targetSuit && t.value === targetValue));
           player.melds.push({ type: 'anKong', tiles: matchingTiles });
           
-          // 🌟 只有暗槓會觸發：向全場收 1 底
-          this.executeInstantPayout(player.seatIndex, [0, 1, 2, 3], 1, '暗槓', 'collect');
+          // 🌟 讀取自訂暗槓金額
+          let amt = this.getRewardAmount('anKong', 1);
+          if (amt > 0) this.executeInstantPayout(player.seatIndex, [0, 1, 2, 3], amt, '暗槓', 'collect');
 
           const drawnTile = this.drawTile(socketId);
           this.sortHand(player);
@@ -1508,7 +1528,7 @@ playerSelfKong(socketId, data) {
               success: true,
               privateState: this.getPrivatePlayerState(socketId)          
           });
-
+          player.hasDiscarded = false;
           this.refreshAndSendYourTurn(socketId, player, drawnTile);
           return { success: true, type: 'anKong' };
       }
@@ -1607,7 +1627,11 @@ refreshAndSendYourTurn(socketId, player, drawnTile) {
 
     this.broadcastGameMessage(`${player.name} 吃了 ${this.getTileDisplayName(tile)}`);
     this.clearPendingActions();
+    
+    player.hasDiscarded = false; // 🌟 核心修正：強制解除出牌防連點鎖！
     this.currentTurn = player.seatIndex;
+    io.to(this.roomId).emit('turnChange', { seat: player.seatIndex }); // 🌟 同步更新畫面的回合箭頭！
+    
     io.to(this.roomId).emit('meldCreated', { seat: player.seatIndex, meld: { type: 'chow', tiles: chowTiles, fromPlayer: this.lastDiscardPlayer ? this.players.get(this.lastDiscardPlayer)?.seatIndex : -1 } });
     this.discardPile = this.discardPile.filter(t => t.id !== tile.id);
     this.lastDiscard = null; this.lastDiscardPlayer = null;
@@ -1816,8 +1840,9 @@ console.log(`isSelfDraw: ${isSelfDraw}, winTile: ${winTile ? winTile.value + win
 
         // 🌟 就在這行 console.log 的正下方，加上這段復仇自摸賞罰：
         if (isSelfDraw && this.lastRoundMultiWinBlaster === player.seatIndex && this.lastRoundMultiWinners && this.lastRoundMultiWinners.length > 0) {
-            // 出銃多響後自摸，即時向上一局胡你的所有人各收 2 底！
-            this.executeInstantPayout(player.seatIndex, this.lastRoundMultiWinners, 2, '出銃多響後自摸復仇', 'collect');
+            // 出銃多響後自摸，即時向上一局胡你的所有人收錢！
+            let amt = this.getRewardAmount('chuChongDoubleTripleThenZiMo', 2);
+            if (amt > 0) this.executeInstantPayout(player.seatIndex, this.lastRoundMultiWinners, amt, '出銃多響後自摸復仇', 'collect');
         }
 // 叮即：叮牌後，還沒摸/打牌就胡了
     const isTingBeforeDraw = player.tingJiEligible;
@@ -2459,13 +2484,15 @@ calculateBestDiscard(player) {
           this.dealTiles(); // 🎯 骰子飛完後才發牌！
 
           // 結算開局骰子即時賞罰
-          const isTriple = (this.diceValues[0] === this.diceValues[1] && this.diceValues[1] === this.diceValues[2]);
+        const isTriple = (this.diceValues[0] === this.diceValues[1] && this.diceValues[1] === this.diceValues[2]);
           if (isTriple) {
-              this.executeInstantPayout(this.dealer, [0, 1, 2, 3], 1, '圍骰', 'collect');
+              let amt = this.getRewardAmount('weiShai', 1);
+              if (amt > 0) this.executeInstantPayout(this.dealer, [0, 1, 2, 3], amt, '圍骰', 'collect');
           } else {
               const sorted = [...this.diceValues].sort((a, b) => a - b);
               if (sorted[0] === 1 && sorted[1] === 2 && sorted[2] === 3) {
-                  this.executeInstantPayout(this.dealer, [0, 1, 2, 3], 1, '123骰', 'penalize');
+                  let amt = this.getRewardAmount('oneTwoThreeShai', 1);
+                  if (amt > 0) this.executeInstantPayout(this.dealer, [0, 1, 2, 3], amt, '123骰', 'penalize');
               }
           }
 
