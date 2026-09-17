@@ -3145,19 +3145,28 @@ io.on('connection', (socket) => {
             room.settings.customTaiTable = settings.customTaiTable;
         }
         
-        // ⚙️ 🌟 核心修正：破除 !! 盲區，採用「嚴格值比對」
-        // 只有當前端明確傳來 布林值 true 或 字串 'true' 時才算開啟，其餘（包含 false）一律關閉！
+       // ⚙️ 🌟 核心修正：破除 !! 盲區，採用「嚴格值比對」
         if (settings && settings.hasOwnProperty('enableExchange')) {
             room.settings.enableExchange = (settings.enableExchange === true || settings.enableExchange === 'true');
+        }
+
+        // 🌟 新增：接收並儲存「每一鋪換牌」的設定，使用一樣的嚴格防呆邏輯
+        if (settings && settings.hasOwnProperty('exchangeEveryRound')) {
+            room.settings.exchangeEveryRound = (settings.exchangeEveryRound === true || settings.exchangeEveryRound === 'true');
         }
 
         // 向全房間同步最新設定
         io.to(room.roomId).emit('roomSettingsUpdated', room.settings);
         
-        const msg = `房間設定已更新：打 ${room.settings.totalCircles} 圈，換牌機制：${room.settings.enableExchange ? '開啟' : '關閉'}`;
+        // 順便把新設定加進廣播訊息裡，讓全場都知道
+        let exchangeMsg = room.settings.enableExchange 
+            ? (room.settings.exchangeEveryRound ? '開啟 (每一鋪換)' : '開啟 (僅開局換)') 
+            : '關閉';
+        const msg = `房間設定已更新：打 ${room.settings.totalCircles} 圈，換牌機制：${exchangeMsg}`;
+        
         room.broadcastGameMessage(msg, 'system');
     } catch (error) { console.error('更新房間設定錯誤:', error); }
-  });
+});
 // 🌟 核彈級作弊通道：一鍵直接進入大總結算 (server.js)
   socket.on('debugSkipRound', () => {
     try {
