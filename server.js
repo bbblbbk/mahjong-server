@@ -2499,8 +2499,11 @@ calculateBestDiscard(player) {
           const sortedDice = [...this.diceValues].sort((a, b) => a - b);
           const isStraight = (sortedDice[0] + 1 === sortedDice[1] && sortedDice[1] + 1 === sortedDice[2]);
           const isSouthOrNorth = (this.windRound === 1 || this.windRound === 3);
+// 🌟 核心升級：只要「大換牌開關」有開，且滿足 (骰子條件 OR 風圈條件 OR 每一鋪都換開關有開)，就強制進入換牌！
+          const shouldExchange = this.settings.enableExchange !== false && 
+                                 (isTriple || isStraight || isSouthOrNorth || this.settings.exchangeEveryRound);
 
-          if ((isTriple || isStraight || isSouthOrNorth) && this.settings.enableExchange !== false) {
+          if (shouldExchange) {
               this.gameState = 'exchanging';
               this.exchangeData.clear();
               
