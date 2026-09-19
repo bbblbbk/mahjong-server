@@ -3438,6 +3438,30 @@ io.on('connection', (socket) => {
     } catch (error) { console.error('加槓測試錯誤:', error); }
   });
 
+  // 🌟 [作弊通道] 一鍵生成暗槓測試環境
+  socket.on('debugAnKong', () => {
+    try {
+        const room = gameManager.getPlayerRoom(socket.id);
+        if (!room || room.gameState !== 'playing') return;
+        const player = room.players.get(socket.id);
+
+        // 1. 在手牌裡無中生有塞入「四張一萬」
+        for (let i = 0; i < 4; i++) {
+            player.hand.push({ id: `test_ankong_${i}`, type: 'number', suit: 'wan', value: '1' });
+        }
+
+        // 2. 強制把回合搶過來變成你的回合
+        room.currentTurn = player.seatIndex;
+
+        // 3. 重新理牌並抽一張牌，觸發客戶端的 yourTurn 更新，讓系統偵測到你有暗槓選項
+        const drawnTile = room.drawTile(socket.id);
+        room.sortHand(player);
+        room.refreshAndSendYourTurn(socket.id, player, drawnTile);
+        
+        room.broadcastGameMessage("🛠️ [Debug] 已配置暗槓測試環境！", "system");
+    } catch (error) { console.error('暗槓測試錯誤:', error); }
+  });
+
  socket.on('playTile', (tileData) => {
     console.log('收到 playTile 事件');
     try {
