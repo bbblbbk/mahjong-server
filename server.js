@@ -1516,11 +1516,13 @@ playerSelfKong(socketId, data) {
           const drawnTile = this.drawTile(socketId);
           this.sortHand(player);
 
+         // 找到這段：io.to(this.roomId).emit('meldCreated', ...
           io.to(this.roomId).emit('meldCreated', { 
               seat: player.seatIndex, 
               meld: { 
                   type: 'anKong', 
-                  tiles: matchingTiles.map(t => ({ id: t.id, type: 'number', suit: 'wan', value: '1' })) 
+                  // 🌟 核心修正：直接傳送真實的牌，不傳假牌！
+                  tiles: matchingTiles 
               } 
           });
 
