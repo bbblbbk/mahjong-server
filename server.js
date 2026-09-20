@@ -203,13 +203,15 @@ this.turnTimer = null;   // 🌟 伺服器打牌倒數計時器
   startPlayerTurnTimer(player, aiDelay = 1000) {
       if (this.turnTimer) clearTimeout(this.turnTimer);
       
+      // 🌟 核心修正：如果是「託管中」的真人，直接 0 毫秒秒出牌！AI 則保留擬真延遲。
       if (player.isAI || player.isAFK) {
-          console.log(`🤖 AI/託管 ${player.name} 在 ${aiDelay}ms 後打牌`);
+          const actualDelay = player.isAFK ? 0 : aiDelay; 
+          console.log(`🤖 AI/託管 ${player.name} 在 ${actualDelay}ms 後打牌`);
           this.turnTimer = setTimeout(() => { 
               if (this.gameState !== 'finished') {
                   this.aiDiscard(player); 
               }
-          }, aiDelay);
+          }, actualDelay);
       } else {
           // 🌟 真人玩家開啟伺服器端倒數計時 (容忍前端時間 + 2秒網路延遲)
           this.turnTimer = setTimeout(() => {
@@ -685,6 +687,7 @@ processPulling(winnerSeat, loserSeat, currentScore, isSelfDraw) {
     if (!player) return null;
     if (this.wall.length === 0) { this.endGame('draw'); return null; }
 
+    // 🌟 核心修正：只有在玩家「正式摸牌」進入新回合時，才解除上一回合的吃碰禁打鎖定！
     player.restrictedDiscards = [];
     const tile = this.wall.pop();
     if (tile.type === 'flower') {
