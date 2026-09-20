@@ -869,7 +869,8 @@ checkActionsAfterDiscard(discarderSocketId, tile) {
         
         for (let socketId of allPendingPlayers) {
             const player = this.players.get(socketId);
-            if (player.isAI) {
+            // 🌟 將託管 (AFK) 視同 AI，自動執行吃碰槓胡評估！
+            if (player.isAI || player.isAFK) {
                 aiPlayers.push({ socketId, actions: playerActions[socketId] });
             } else {
                 humanPlayers.push({ socketId, actions: playerActions[socketId] });
@@ -1141,7 +1142,8 @@ checkLowerPriorityActions(tile) {
         
         for (let action of pendingActions) {
             const player = this.players.get(action.player);
-            if (player.isAI) aiPlayers.push(action);
+            // 🌟 將託管 (AFK) 視同 AI
+            if (player.isAI || player.isAFK) aiPlayers.push(action);
             else humanPlayers.push(action);
         }
         
@@ -1591,9 +1593,10 @@ refreshAndSendYourTurn(socketId, player, drawnTile) {
         privateState: this.getPrivatePlayerState(socketId) 
     });
 
-    if (player.isAI) {
+  // 🌟 槓完牌後，如果是託管狀態，0.3秒後自動打出廢牌
+    if (player.isAI || player.isAFK) {
         setTimeout(() => {
-            console.log(`🤖 AI ${player.name} 槓後打牌`);
+            console.log(`🤖 AI/託管 ${player.name} 槓後打牌`);
             this.aiDiscard(player);
         }, 300);
     }
@@ -2025,25 +2028,38 @@ scheduleNextTurn(delay = 300) {
       this.pendingActionQueue = null;
       this.waitingForAction = null;
 
-      // 3. 根據結果執行對應的原本邏輯
+     // 3. 根據結果執行對應的原本邏輯
+      let actionResult = { success: false };
+      
       if (highestAction.action === 'win') {
           // 🚨 多響支援：如果有多個人同時按了 win (同為最高優先級 4)，我們要把他們都抓出來！
           const winners = responses.filter(r => r.action === 'win').map(r => r.socketId);
           this.roundWinClaims = winners;
           this.executeMultiWin();
+          actionResult = { success: true }; // win 內部自己會切換狀態，所以強制為 true
       } 
       else if (highestAction.action === 'kong') {
-          this.playerKong(highestAction.socketId);
+          actionResult = this.playerKong(highestAction.socketId);
       } 
       else if (highestAction.action === 'pong') {
-          this.playerPong(highestAction.socketId);
+          actionResult = this.playerPong(highestAction.socketId);
       } 
       else if (highestAction.action === 'chow') {
-          this.playerChow(highestAction.socketId, highestAction.data ? highestAction.data.chowType : 'middle');
+          actionResult = this.playerChow(highestAction.socketId, highestAction.data ? highestAction.data.chowType : 'middle');
       } 
       else {
           // 大家全按了 Pass 或者都沒能操作，輪到下一家摸牌
+          actionResult = { success: true }; 
           this.scheduleNextTurn(300);
+      }
+
+      // 🌟 核心防卡死保險：如果上面的吃/碰/槓因為前端誤傳資料而執行「失敗」！
+      // 絕對不能掛在這邊等死，必須強制當作 Pass 處理，把回合推進給下家！
+      if (highestAction.action !== 'win' && highestAction.action !== 'pass') {
+          if (!actionResult || actionResult.success === false) {
+              console.log(`❌ 玩家 ${highestAction.seat} 的 ${highestAction.action} 執行失敗！防卡死啟動，強制 Pass！`);
+              this.scheduleNextTurn(100);
+          }
       }
   }
 
@@ -2545,8 +2561,8 @@ calculateBestDiscard(player) {
               this.broadcastPlayerState();
               
              for (let player of this.players.values()) {
-                  if (player.isAI) {
-                      // 🌟 修正：只有當換牌數確定了，或者是 AI 自己當莊家時，才允許 AI 出牌！
+                  // 🌟 託管狀態下自動隨機選 3~6 張牌交出
+                  if (player.isAI || player.isAFK) {
                       if (this.exchangeRequiredCount !== 0 || player.seatIndex === this.dealer) {
                           setTimeout(() => this.aiSubmitExchange(player), 1000 + Math.random() * 1500);
                       }
@@ -2587,9 +2603,9 @@ calculateBestDiscard(player) {
           this.exchangeRequiredCount = tileIds.length; 
           this.broadcastGameMessage(`莊家決定全場換 ${this.exchangeRequiredCount} 張牌！請閒家開始選牌。`, 'system');
           
-          // 🌟 喚醒原本在發呆等待的 AI 閒家，讓他們開始選牌
+        // 🌟 喚醒原本在發呆等待的 AI 或託管閒家，讓他們開始選牌
           for (let p of this.players.values()) {
-              if (p.isAI && p.seatIndex !== this.dealer) {
+              if ((p.isAI || p.isAFK) && p.seatIndex !== this.dealer) {
                   setTimeout(() => this.aiSubmitExchange(p), 1000 + Math.random() * 1500);
               }
           }
