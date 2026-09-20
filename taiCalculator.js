@@ -6844,7 +6844,6 @@ module.exports = {
   checkAnSiGuiSi,
   checkShuangSiGui,
   checkAnShuangSiGui,
-  isOpenMeld,
   countPongs,
   countGangs,
   checkKankanhu,
@@ -6970,6 +6969,5 @@ module.exports = {
   checkHunLaoTouShiSanYao,
    checkQuanDaiYaoWithMelds,
    getSiGuiGroups,
-   getAllTileCounts,
    checkTianTi
 };
