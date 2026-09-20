@@ -1158,184 +1158,183 @@ function checkSixConsecutivePairs(hand, melds) { return checkConsecutivePairs(ha
 function checkSevenConsecutivePairs(hand, melds) { return checkConsecutivePairs(hand, melds, 7); }
 function checkEightConsecutivePairs(hand, melds) { return checkConsecutivePairs(hand, melds, 8); }
 // ============================================
-// 四歸系列檢查函數（恢復版）
+// 四歸系列檢查函數（終極精準修正版）
 // ============================================
-function isFourTileSetMing(suit, value, melds, winType, winTile) {
-    if (winType === 'discard' && winTile && winTile.suit === suit && parseInt(winTile.value) === parseInt(value)) return true;
-    for (let meld of melds) {
-        if (meld.type === 'chow' || meld.type === 'pong' || meld.type === 'mingKong') {
-            if (meld.tiles.some(t => t.suit === suit && t.value === value.toString())) return true;
-        }
-    }
-    return false;
-}
-function getAllTileCounts(hand, melds) {
-  const counts = {};
-  for (let tile of hand) {
-    if (tile.type !== 'flower') counts[`${tile.suit}_${tile.value}`] = (counts[`${tile.suit}_${tile.value}`] || 0) + 1;
-  }
-  for (let meld of melds) {
-    if (meld && meld.tiles) {
-      for (let tile of meld.tiles) {
-        if (tile.value) counts[`${tile.suit}_${tile.value}`] = (counts[`${tile.suit}_${tile.value}`] || 0) + 1;
-      }
-    }
-  }
-  return counts;
-}
 
-function getChowCountWithTile(hand, melds, tileValue, tileSuit) {
-    const num = parseInt(tileValue);
-    if (isNaN(num)) return 0;
-    const allTiles = [...hand];
-    for (let meld of melds) if (meld && meld.tiles) allTiles.push(...meld.tiles);
-    const suitTiles = allTiles.filter(t => t.type === 'number' && t.suit === tileSuit);
-    const counts = {};
-    for (let tile of suitTiles) {
-        const n = parseInt(tile.value);
-        if (!isNaN(n)) counts[n] = (counts[n] || 0) + 1;
-    }
-    const positions = [];
-    if (num <= 7) positions.push(Math.min(counts[num] || 0, counts[num + 1] || 0, counts[num + 2] || 0));
-    if (num >= 2 && num <= 8) positions.push(Math.min(counts[num - 1] || 0, counts[num] || 0, counts[num + 1] || 0));
-    if (num >= 3) positions.push(Math.min(counts[num - 2] || 0, counts[num - 1] || 0, counts[num] || 0));
-    return positions.length > 0 ? Math.max(...positions) : 0;
-}
-
-/**
- * 檢查是否為副露（吃或碰，明槓）
- */
-function isOpenMeld(melds, tileKey) {
-    const safeMelds = Array.isArray(melds) ? melds : [];
+// 🌟 核心防呆工具：計算這四張牌分佈在幾個不同的面子（含雀頭）裡，並精準判斷是否為「明」
+function getSiGuiGroups(suit, value, melds, winType, winTile, allMelds, eyeTile) {
+    let groupCount = 0;
+    let hasMing = false;
     
-    for (let meld of safeMelds) {
-        if (!meld || !meld.tiles) continue;
+    if (!allMelds || allMelds.length === 0) return { count: 0, hasMing: false };
+
+    // 1. 檢查所有面子 (順子、刻子、槓子)
+    for (let m of allMelds) {
+        if (!m || !m.tiles) continue;
         
-        if (meld.type === 'chow' || meld.type === 'pong' || meld.type === 'mingKong') {
-            for (let tile of meld.tiles) {
-                const key = `${tile.suit}_${tile.value}`;
-                if (key === tileKey) {
-                    return true;
-                }
+        let foundInMeld = false;
+        for (let t of m.tiles) {
+            if (t.suit === suit && t.value === value.toString()) {
+                foundInMeld = true;
+                break;
+            }
+        }
+        
+        if (foundInMeld) {
+            groupCount++;
+            
+            // 判斷此面子是否為「明」
+            // A. 是否為已落地的副露？(吃、碰、明槓)
+            const safeMelds = Array.isArray(melds) ? melds : [];
+            const isExistingMeld = safeMelds.some(orig => 
+                orig.type === m.type && 
+                orig.tiles[0].suit === m.tiles[0].suit && 
+                orig.tiles[0].value === m.tiles[0].value
+            );
+            
+            if (isExistingMeld && m.type !== 'anKong' && m.type !== 'anGang') {
+                hasMing = true;
+            }
+            
+            // B. 是否包含了出銃的那張牌？
+            if (winType === 'discard' && winTile && winTile.suit === suit && winTile.value === value.toString()) {
+                // 如果出銃牌剛好組成這個面子，那這個面子就是明的
+                hasMing = true;
             }
         }
     }
+
+    // 2. 檢查雀頭 (將眼)
+    if (eyeTile && eyeTile.suit === suit && eyeTile.value === value.toString()) {
+        groupCount++;
+        // 雀頭如果是單釣出銃胡的，也算明！
+        if (winType === 'discard' && winTile && winTile.suit === suit && winTile.value === value.toString()) {
+            hasMing = true;
+        }
+    }
+
+    return { count: groupCount, hasMing };
+}
+
+// 輔助函數：取得所有出現 4 次的數字牌
+function getFourTileKeys(hand, melds) {
+    const counts = {};
+    const fourTiles = [];
     
+    const allTiles = [...hand];
+    const safeMelds = Array.isArray(melds) ? melds : [];
+    for (let m of safeMelds) {
+        if (m && m.tiles) allTiles.push(...m.tiles);
+    }
+    
+    for (let tile of allTiles) {
+        if (tile.type !== 'flower') {
+            const key = `${tile.suit}_${tile.value}`;
+            counts[key] = (counts[key] || 0) + 1;
+        }
+    }
+    
+    for (let [key, count] of Object.entries(counts)) {
+        if (count === 4) {
+            const [suit, value] = key.split('_');
+            if (suit !== 'honor') { // 四歸系列只算筒索萬數字牌
+                fourTiles.push({ suit, value });
+            }
+        }
+    }
+    return fourTiles;
+}
+
+// 1. 明四歸一 (四張牌分佈在 2 個面子裡，且包含明牌)
+function checkMingSiGuiYi(hand, melds, winType, winTile, allMelds, eyeTile) {
+    const fourTiles = getFourTileKeys(hand, melds);
+    for (let t of fourTiles) {
+        const stats = getSiGuiGroups(t.suit, t.value, melds, winType, winTile, allMelds, eyeTile);
+        if (stats.count === 2 && stats.hasMing) return true;
+    }
     return false;
 }
 
-function checkMingSiGuiYi(hand, melds, winType, winTile) {
-  const counts = getAllTileCounts(hand, melds);
-  for (let [key, count] of Object.entries(counts)) {
-    if (count === 4) {
-      const [suit, value] = key.split('_');
-      if (suit === 'honor') continue;
-      const chowCount = getChowCountWithTile(hand, melds, value, suit);
-      if (chowCount < 1 || chowCount >= 2) continue;
-      if (isFourTileSetMing(suit, value, melds, winType, winTile)) return true;
+// 2. 暗四歸一 (四張牌分佈在 2 個面子裡，且全為暗牌)
+function checkAnSiGuiYi(hand, melds, winType, winTile, allMelds, eyeTile) {
+    const fourTiles = getFourTileKeys(hand, melds);
+    for (let t of fourTiles) {
+        const stats = getSiGuiGroups(t.suit, t.value, melds, winType, winTile, allMelds, eyeTile);
+        if (stats.count === 2 && !stats.hasMing) return true;
     }
-  }
-  return false;
+    return false;
 }
 
-function checkAnSiGuiYi(hand, melds, winType, winTile) {
-  const counts = getAllTileCounts(hand, melds);
-  for (let [key, count] of Object.entries(counts)) {
-    if (count === 4) {
-      const [suit, value] = key.split('_');
-      if (suit === 'honor') continue;
-      const chowCount = getChowCountWithTile(hand, melds, value, suit);
-      if (chowCount < 1 || chowCount >= 2) continue;
-      if (!isFourTileSetMing(suit, value, melds, winType, winTile)) return true;
+// 3. 明四歸二 (四張牌分佈在 3 個面子裡，且包含明牌)
+function checkMingSiGuiEr(hand, melds, winType, winTile, allMelds, eyeTile) {
+    const fourTiles = getFourTileKeys(hand, melds);
+    for (let t of fourTiles) {
+        const stats = getSiGuiGroups(t.suit, t.value, melds, winType, winTile, allMelds, eyeTile);
+        if (stats.count === 3 && stats.hasMing) return true;
     }
-  }
-  return false;
+    return false;
 }
 
-function checkMingSiGuiEr(hand, melds, winType, winTile) {
-  const counts = getAllTileCounts(hand, melds);
-  for (let [key, count] of Object.entries(counts)) {
-    if (count === 4) {
-      const [suit, value] = key.split('_');
-      if (suit === 'honor') continue;
-      const chowCount = getChowCountWithTile(hand, melds, value, suit);
-      if (chowCount < 2 || chowCount >= 4) continue;
-      if (isFourTileSetMing(suit, value, melds, winType, winTile)) return true;
+// 4. 暗四歸二 (四張牌分佈在 3 個面子裡，且全為暗牌)
+function checkAnSiGuiEr(hand, melds, winType, winTile, allMelds, eyeTile) {
+    const fourTiles = getFourTileKeys(hand, melds);
+    for (let t of fourTiles) {
+        const stats = getSiGuiGroups(t.suit, t.value, melds, winType, winTile, allMelds, eyeTile);
+        if (stats.count === 3 && !stats.hasMing) return true;
     }
-  }
-  return false;
+    return false;
 }
 
-function checkAnSiGuiEr(hand, melds, winType, winTile) {
-  const counts = getAllTileCounts(hand, melds);
-  for (let [key, count] of Object.entries(counts)) {
-    if (count === 4) {
-      const [suit, value] = key.split('_');
-      if (suit === 'honor') continue;
-      const chowCount = getChowCountWithTile(hand, melds, value, suit);
-      if (chowCount < 2 || chowCount >= 4) continue;
-      if (!isFourTileSetMing(suit, value, melds, winType, winTile)) return true;
+// 5. 明四歸四 (四張牌分佈在 4 個面子裡，且包含明牌)
+function checkMingSiGuiSi(hand, melds, winType, winTile, allMelds, eyeTile) {
+    const fourTiles = getFourTileKeys(hand, melds);
+    for (let t of fourTiles) {
+        const stats = getSiGuiGroups(t.suit, t.value, melds, winType, winTile, allMelds, eyeTile);
+        if (stats.count === 4 && stats.hasMing) return true;
     }
-  }
-  return false;
+    return false;
 }
 
-function checkMingSiGuiSi(hand, melds, winType, winTile) {
-  const counts = getAllTileCounts(hand, melds);
-  for (let [key, count] of Object.entries(counts)) {
-    if (count === 4) {
-      const [suit, value] = key.split('_');
-      if (suit === 'honor') continue;
-      const chowCount = getChowCountWithTile(hand, melds, value, suit);
-      if (chowCount < 4) continue;
-      if (isFourTileSetMing(suit, value, melds, winType, winTile)) return true;
+// 6. 暗四歸四 (四張牌分佈在 4 個面子裡，且全為暗牌)
+function checkAnSiGuiSi(hand, melds, winType, winTile, allMelds, eyeTile) {
+    const fourTiles = getFourTileKeys(hand, melds);
+    for (let t of fourTiles) {
+        const stats = getSiGuiGroups(t.suit, t.value, melds, winType, winTile, allMelds, eyeTile);
+        if (stats.count === 4 && !stats.hasMing) return true;
     }
-  }
-  return false;
+    return false;
 }
 
-function checkAnSiGuiSi(hand, melds, winType, winTile) {
-  const counts = getAllTileCounts(hand, melds);
-  for (let [key, count] of Object.entries(counts)) {
-    if (count === 4) {
-      const [suit, value] = key.split('_');
-      if (suit === 'honor') continue;
-      const chowCount = getChowCountWithTile(hand, melds, value, suit);
-      if (chowCount < 4) continue;
-      if (!isFourTileSetMing(suit, value, melds, winType, winTile)) return true;
+// 7. 明雙四歸 (有兩組四歸，且至少一組是明四歸)
+function checkShuangSiGui(hand, melds, winType, winTile, allMelds, eyeTile) {
+    const fourTiles = getFourTileKeys(hand, melds);
+    let validSiGuiCount = 0;
+    let hasMingSiGui = false;
+    
+    for (let t of fourTiles) {
+        const stats = getSiGuiGroups(t.suit, t.value, melds, winType, winTile, allMelds, eyeTile);
+        // 只要分佈在 >=2 個面子，就滿足基本的四歸條件
+        if (stats.count >= 2) {
+            validSiGuiCount++;
+            if (stats.hasMing) hasMingSiGui = true;
+        }
     }
-  }
-  return false;
+    return validSiGuiCount >= 2 && hasMingSiGui;
 }
 
-function checkShuangSiGui(hand, melds, winType, winTile) {
-  const counts = getAllTileCounts(hand, melds);
-  let validCount = 0;
-  for (let [key, count] of Object.entries(counts)) {
-    if (count === 4) {
-      const [suit, value] = key.split('_');
-      if (suit === 'honor') continue;
-      const chowCount = getChowCountWithTile(hand, melds, value, suit);
-      if (chowCount === 0) continue;
-      if (isFourTileSetMing(suit, value, melds, winType, winTile)) validCount++;
+// 8. 暗雙四歸 (有兩組四歸，且兩組必須全部是暗的)
+function checkAnShuangSiGui(hand, melds, winType, winTile, allMelds, eyeTile) {
+    const fourTiles = getFourTileKeys(hand, melds);
+    let validAnSiGuiCount = 0;
+    
+    for (let t of fourTiles) {
+        const stats = getSiGuiGroups(t.suit, t.value, melds, winType, winTile, allMelds, eyeTile);
+        // 必須分佈在 >=2 個面子，且完全沒有明牌
+        if (stats.count >= 2 && !stats.hasMing) {
+            validAnSiGuiCount++;
+        }
     }
-  }
-  return validCount >= 2;
-}
-
-function checkAnShuangSiGui(hand, melds, winType, winTile) {
-  const counts = getAllTileCounts(hand, melds);
-  let validCount = 0;
-  for (let [key, count] of Object.entries(counts)) {
-    if (count === 4) {
-      const [suit, value] = key.split('_');
-      if (suit === 'honor') continue;
-      const chowCount = getChowCountWithTile(hand, melds, value, suit);
-      if (chowCount === 0) continue;
-      if (!isFourTileSetMing(suit, value, melds, winType, winTile)) validCount++;
-    }
-  }
-  return validCount >= 2;
+    return validAnSiGuiCount >= 2;
 }
 
 // ============================================
@@ -2166,41 +2165,32 @@ function getNumericGroups(hand, melds) {
 // =========================================================================
 // 🌟 核心修正：統一的混帶數字校驗引擎
 // =========================================================================
-function validateHunDaiCount(hand, melds, requiredCount) {
-    // 1. 收集全手牌中，所有「數字面子」與「數字眼牌」各自的數字集合
-    const numericGroups = [];
+function validateHunDaiCount(hand, melds, requiredCount, allMelds = []) {
+    if (!allMelds || allMelds.length === 0) return false;
 
-    // 處理副露 (Melds)
-    for (let m of melds) {
-        const nums = new Set();
-        for (let t of m.tiles) {
-            if (t.type === 'number') nums.add(parseInt(t.value));
-        }
-        if (nums.size > 0) numericGroups.push(nums);
-    }
+    const usedNumbers = new Set();
+    let hasNumberMeld = false;
 
-    // 處理手牌中的面子與眼牌 (從 evalHand 中分離數字群)
-    // 為了精準，我們直接向手牌與副露中所有出現過的數字進行窮舉
-    const allUsedNumbers = new Set();
-    for (let t of hand) {
-        if (t.type === 'number') allUsedNumbers.add(parseInt(t.value));
-    }
-    for (let m of melds) {
+    // 1. 嚴格提取：只看「數字牌」構成的「面子」與「眼牌」
+    for (let m of allMelds) {
+        if (!m || !m.tiles || m.tiles.length === 0) continue;
+        
+        // 排除字牌面子
+        if (m.tiles[0].type === 'honor') continue;
+        
+        hasNumberMeld = true;
+        // 把這個數字面子裡的所有數字都加進集合
         for (let t of m.tiles) {
-            if (t.type === 'number') allUsedNumbers.add(parseInt(t.value));
+            if (t.type === 'number') {
+                usedNumbers.add(parseInt(t.value));
+            }
         }
     }
 
-    const uniqueNumbersArray = Array.from(allUsedNumbers);
-    if (numericGroups.length === 0 && uniqueNumbersArray.length === 0) return false;
+    if (!hasNumberMeld) return false; // 全是字牌的話，就不算混帶數字
 
-    // 這裡我們改用「滿足條件的獨立數字個數」來判斷
-    // 港台牌標準定義：全手牌所有數字牌花色群中，總共只使用了 X 種數字
-    if (uniqueNumbersArray.length === requiredCount) {
-        return true;
-    }
-
-    return false;
+    // 2. 最終判定：這些數字面子，是不是剛好只由 requiredCount 種數字組成？
+    return usedNumbers.size === requiredCount;
 }
 
 /**
@@ -5146,15 +5136,15 @@ function checkHunLaoTouShiSanYao(hand, melds) {
  */
 function countAnKe(hand, melds, winType = null, winTile = null) {
     let anKeCount = 0;
+    
+    // 1. 處理已經攤在地上的副露 (明槓、暗槓、加槓)
     for (let m of melds) {
-        // 🌟 核心修正：不管是 暗槓(anKong/anGang)、明槓(mingKong/kong)、加槓/補槓(jiaKong/buGang)，一律無條件加計為暗刻！
-        if (m && (m.type === 'anKong' || m.type === 'anGang' || 
-                  m.type === 'mingKong' || m.type === 'kong' || 
-                  m.type === 'jiaKong' || m.type === 'buGang')) {
-            anKeCount++;
+        if (m && (m.type === 'anKong' || m.type === 'anGang')) {
+            anKeCount++; // 只有暗槓才是暗刻！
         }
     }
     
+    // 2. 處理手牌中的暗刻
     const handCounts = {};
     for (let t of hand) {
         if (t.type !== 'flower') {
@@ -5166,8 +5156,9 @@ function countAnKe(hand, melds, winType = null, winTile = null) {
     for (let [key, c] of Object.entries(handCounts)) {
         if (c >= 3) {
             const [suit, value] = key.split('_');
-            // 🌟 出銃判斷：如果這個 3 張的刻子，包含了別人打的那張，就是明刻！不計入暗刻。
-            if (winType === 'discard' && winTile && winTile.suit === suit && winTile.value === value) {
+            
+            // 🌟 出銃判斷：如果這個 3 張的刻子，包含了別人打的那張，這就是「明刻」，絕對不計入暗刻！
+            if (winType === 'discard' && winTile && winTile.suit === suit && winTile.value === value.toString()) {
                 continue; 
             }
             anKeCount++;
@@ -5618,13 +5609,14 @@ try {
         let hasMenqingTing = false;
 
         // 1. 先判斷是否為門清叮
-        if (isTing && isMenqing && rules.handPatterns?.menqingTing?.enabled) {
+      if (isTing && isMenqing && rules.handPatterns?.menqingTing?.enabled) {
             totalTai += rules.handPatterns.menqingTing.tai;
             taiDetails.push({ name: rules.handPatterns.menqingTing.name, tai: rules.handPatterns.menqingTing.tai });
             hasMenqingTing = true;
         } 
-        else if (isMenqing && !isHeavenEarthHumanWin && !isSpecialPattern && rules.handPatterns?.menqing?.enabled) {
-            // 沒有叮牌的純門清，或門清叮沒開啟
+        // 🌟 核心修正：刪除 !isSpecialPattern，讓特殊牌型也能享受門清加成！
+        else if (isMenqing && !isHeavenEarthHumanWin && rules.handPatterns?.menqing?.enabled) {
+            // 沒有叮牌的純門清
             totalTai += rules.handPatterns.menqing.tai;
             taiDetails.push({ name: rules.handPatterns.menqing.name, tai: rules.handPatterns.menqing.tai });
         }
@@ -5659,7 +5651,7 @@ try {
             }
         }
     }
-    // 2. 門清自摸
+   // 2. 門清自摸 (同樣刪除 !isSpecialPattern 的限制)
     if (isMenqing && isSelfDraw(winType) && !isHeavenEarthHumanWin && !isHeavenOrEarth && rules.handPatterns?.menqingSelfDraw?.enabled) {
         totalTai += rules.handPatterns.menqingSelfDraw.tai;
         taiDetails.push({ name: rules.handPatterns.menqingSelfDraw.name, tai: rules.handPatterns.menqingSelfDraw.tai });
@@ -6201,12 +6193,13 @@ if (!hasShuangShu && rules.handPatterns?.sanShu?.enabled && checkSanShu(hand, me
     // 19. 四歸系列
     try {
       if (!isSpecialPattern) {
-        const hasAnSiGuiSi = rules.handPatterns?.anSiGuiSi?.enabled && checkAnSiGuiSi(hand, melds, winType, winTile);
-        const hasMingSiGuiSi = rules.handPatterns?.mingSiGuiSi?.enabled && checkMingSiGuiSi(hand, melds, winType, winTile);
-        const hasAnSiGuiEr = rules.handPatterns?.anSiGuiEr?.enabled && checkAnSiGuiEr(hand, melds, winType, winTile);
-        const hasMingSiGuiEr = rules.handPatterns?.mingSiGuiEr?.enabled && checkMingSiGuiEr(hand, melds, winType, winTile);
-        const hasAnSiGuiYi = rules.handPatterns?.anSiGuiYi?.enabled && checkAnSiGuiYi(hand, melds, winType, winTile);
-        const hasMingSiGuiYi = rules.handPatterns?.mingSiGuiYi?.enabled && checkMingSiGuiYi(hand, melds, winType, winTile);
+        // 🌟 核心修正：將 allMelds 與 eyeTile 傳入！
+        const hasAnSiGuiSi = rules.handPatterns?.anSiGuiSi?.enabled && checkAnSiGuiSi(hand, melds, winType, winTile, allMelds, eyeTile);
+        const hasMingSiGuiSi = rules.handPatterns?.mingSiGuiSi?.enabled && checkMingSiGuiSi(hand, melds, winType, winTile, allMelds, eyeTile);
+        const hasAnSiGuiEr = rules.handPatterns?.anSiGuiEr?.enabled && checkAnSiGuiEr(hand, melds, winType, winTile, allMelds, eyeTile);
+        const hasMingSiGuiEr = rules.handPatterns?.mingSiGuiEr?.enabled && checkMingSiGuiEr(hand, melds, winType, winTile, allMelds, eyeTile);
+        const hasAnSiGuiYi = rules.handPatterns?.anSiGuiYi?.enabled && checkAnSiGuiYi(hand, melds, winType, winTile, allMelds, eyeTile);
+        const hasMingSiGuiYi = rules.handPatterns?.mingSiGuiYi?.enabled && checkMingSiGuiYi(hand, melds, winType, winTile, allMelds, eyeTile);
         
         if (hasAnSiGuiSi) {
           totalTai += rules.handPatterns.anSiGuiSi.tai;
@@ -6228,11 +6221,12 @@ if (!hasShuangShu && rules.handPatterns?.sanShu?.enabled && checkSanShu(hand, me
           taiDetails.push({ name: rules.handPatterns.mingSiGuiYi.name, tai: rules.handPatterns.mingSiGuiYi.tai });
         }
         
-        if (rules.handPatterns?.shuangSiGui?.enabled && checkShuangSiGui(hand, melds)) {
+        // 雙四歸也要傳！
+        if (rules.handPatterns?.shuangSiGui?.enabled && checkShuangSiGui(hand, melds, winType, winTile, allMelds, eyeTile)) {
           totalTai += rules.handPatterns.shuangSiGui.tai;
           taiDetails.push({ name: rules.handPatterns.shuangSiGui.name, tai: rules.handPatterns.shuangSiGui.tai });
         }
-        if (rules.handPatterns?.anShuangSiGui?.enabled && checkAnShuangSiGui(hand, melds)) {
+        if (rules.handPatterns?.anShuangSiGui?.enabled && checkAnShuangSiGui(hand, melds, winType, winTile, allMelds, eyeTile)) {
           totalTai += rules.handPatterns.anShuangSiGui.tai;
           taiDetails.push({ name: rules.handPatterns.anShuangSiGui.name, tai: rules.handPatterns.anShuangSiGui.tai });
         }
@@ -6975,7 +6969,7 @@ module.exports = {
   countXiangFengExcludingFullSets,
   checkHunLaoTouShiSanYao,
    checkQuanDaiYaoWithMelds,
-   getChowCountWithTile,
+   getSiGuiGroups,
    getAllTileCounts,
    checkTianTi
 };

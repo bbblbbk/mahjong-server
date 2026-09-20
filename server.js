@@ -858,7 +858,8 @@ checkActionsAfterDiscard(discarderSocketId, tile) {
         this.pendingActionQueue = {
             tile: tile,
             discarder: discarderSocketId,
-            responses: [] // 等待收集大家的回覆
+            responses: [], // 等待收集大家的回覆
+            expectedActions: actions
         };
         const humanPlayers = [];
         const aiPlayers = [];
@@ -1574,15 +1575,16 @@ refreshAndSendYourTurn(socketId, player, drawnTile) {
     
     const canWin = this.checkCanWin(socketId);
     const canTing = !player.isAI ? this.checkCanTing(socketId) : false;
-// 🌟 新增：產生聽牌天書 (只有真人才需要，AI不用發送)
-        const tingDetailsData = currentPlayer.isAI ? [] : this.generateTingDetails(currentPlayer.socketId);
+    const tingDetailsData = player.isAI ? [] : this.generateTingDetails(player.socketId);
+    
     io.to(socketId).emit('yourTurn', { 
-        isFirstTurn: false, 
+        // 🌟 核心修正：如果抽到了補牌，就代表這是一個「全新回合的起點」，必須設為 true 讓客戶端解鎖出牌限制！
+        isFirstTurn: drawnTile ? true : false, 
         drawnTile: drawnTile, 
         canWin: canWin, 
         canTing: canTing,
         isTing: player.isTing,
-        countdownSec: this.settings.timeLimit || 15, // 🌟 新增這行
+        countdownSec: this.settings.timeLimit || 15,
         privateState: this.getPrivatePlayerState(socketId) 
     });
 
@@ -1980,7 +1982,14 @@ console.log(`isSelfDraw: ${isSelfDraw}, winTile: ${winTile ? winTile.value + win
   clearPendingActions() { 
       this.pendingActions = []; 
       this.waitingForAction = null; 
+      // 🌟 追加防呆：強制將目前正在跑的 Queue 徹底摧毀
+      this.pendingActionQueue = null; 
       this.clearTimers(); // 🌟 清除計時器
+      
+      // 🌟 追加防呆：把全場所有人的「動作鎖」全部解開
+      for (let p of this.players.values()) {
+          p.restrictedDiscards = []; 
+      }
   }
 
 scheduleNextTurn(delay = 300) {
@@ -2567,20 +2576,21 @@ calculateBestDiscard(player) {
       if (this.gameState !== 'exchanging') return { success: false, reason: '不在換牌階段' };
       
       // 🌟 莊家決定數量的特權
-        if (this.exchangeRequiredCount === 0 && player.seatIndex === this.dealer) {
-            this.exchangeRequiredCount = tileIds.length; 
-            this.broadcastGameMessage(`莊家決定全場換 ${this.exchangeRequiredCount} 張牌！請閒家開始選牌。`, 'system');
-            
-            // 🌟 喚醒原本在發呆等待的 AI 閒家，讓他們開始選牌
-            for (let p of this.players.values()) {
-                if (p.isAI && p.seatIndex !== this.dealer) {
-                    setTimeout(() => this.aiSubmitExchange(p), 1000 + Math.random() * 1500);
-                }
-            }
+      if (this.exchangeRequiredCount === 0 && player.seatIndex === this.dealer) {
+          this.exchangeRequiredCount = tileIds.length; 
+          this.broadcastGameMessage(`莊家決定全場換 ${this.exchangeRequiredCount} 張牌！請閒家開始選牌。`, 'system');
+          
+          // 🌟 喚醒原本在發呆等待的 AI 閒家，讓他們開始選牌
+          for (let p of this.players.values()) {
+              if (p.isAI && p.seatIndex !== this.dealer) {
+                  setTimeout(() => this.aiSubmitExchange(p), 1000 + Math.random() * 1500);
+              }
+          }
 
-            // 立刻廣播給其他閒家，解鎖他們的按鈕
-            this.broadcastGameState(); 
-        }
+          // 🌟 核心防呆修正：更新了數量後，必須強制再把「帶有最新要求數量」的狀態重新發給全場！
+          this.broadcastGameState(); 
+          this.broadcastPlayerState(); // 確保閒家按鈕解鎖！
+      }
       
       const player = this.players.get(socketId);
       if (this.exchangeData.has(socketId)) return { success: false, reason: '已提交過換牌' };
@@ -3840,9 +3850,30 @@ socket.on('surrenderPull', (data) => {
           room.waitingForAction = room.waitingForAction.filter(id => id !== socket.id);
           console.log(`收到玩家 ${player.name} 選擇 [${actionType}]，剩餘等待: [${room.waitingForAction.join(', ') || '無'}]`);
 
-          // 3. 如果所有允許操作的玩家都回覆了，立刻執行結算！
+          // 3. 🌟 智能截斷結算邏輯 (Smart Fast-Forward)
           if (room.waitingForAction.length === 0) {
+              // 全員都回覆了，立刻執行結算！
               room.resolvePendingActions();
+          } else {
+              // 還有玩家沒回覆，檢查目前的「最高優先級」是否已經無敵？
+              const maxSubmittedPriority = Math.max(...room.pendingActionQueue.responses.map(r => r.priority));
+              
+              let maxPendingPriority = 0;
+              if (room.pendingActionQueue.expectedActions) {
+                  // 找出還沒按按鈕的玩家，他們手上的最高優先級是多少？
+                  const pendingActions = room.pendingActionQueue.expectedActions.filter(a => room.waitingForAction.includes(a.player));
+                  if (pendingActions.length > 0) {
+                      maxPendingPriority = Math.max(...pendingActions.map(a => a.priority));
+                  }
+              }
+
+              // 如果目前已提交的最高優先級，嚴格大於剩下沒按的人能按的最高優先級
+              // 就不用等他們了，直接截斷結算！
+              // (注意：用 > 而不是 >=，是為了保留一炮多響(雙胡)等待其他胡牌玩家的機會)
+              if (maxSubmittedPriority > maxPendingPriority && maxSubmittedPriority > ACTION_PRIORITY['pass']) {
+                  console.log(`⚡ 即時截斷！目前的最高優先級 ${maxSubmittedPriority} 已無敵，不等其他人了！`);
+                  room.resolvePendingActions();
+              }
           }
       } catch (error) {
           console.error(`處理操作 ${actionType} 錯誤:`, error);
