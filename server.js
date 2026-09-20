@@ -1979,17 +1979,17 @@ console.log(`isSelfDraw: ${isSelfDraw}, winTile: ${winTile ? winTile.value + win
 
 
 
-  clearPendingActions() { 
+ clearPendingActions() { 
       this.pendingActions = []; 
       this.waitingForAction = null; 
-      // 🌟 追加防呆：強制將目前正在跑的 Queue 徹底摧毀
       this.pendingActionQueue = null; 
-      this.clearTimers(); // 🌟 清除計時器
+      this.clearTimers(); 
       
-      // 🌟 追加防呆：把全場所有人的「動作鎖」全部解開
-      for (let p of this.players.values()) {
-          p.restrictedDiscards = []; 
-      }
+      // 🚨 核心修正：將下面這 3 行徹底刪除！
+      // 絕對不能在這裡清空 restrictedDiscards，否則吃碰完的禁打規則會立刻失效！
+      // for (let p of this.players.values()) {
+      //     p.restrictedDiscards = []; 
+      // }
   }
 
 scheduleNextTurn(delay = 300) {
@@ -3541,6 +3541,19 @@ if (currentPlayer.isAFK) {
           player.isAFK = false;
           console.log(`🧑 玩家 ${player.name} 解除託管，重掌控制權`);
           room.broadcastGameMessage(`玩家 ${player.name} 回到遊戲`, 'system');
+          room.broadcastPlayerState();
+      }
+  });
+
+  // 🌟 玩家倒數超時，主動宣告進入託管
+  socket.on('setAFK', () => {
+      const room = gameManager.getPlayerRoom(socket.id);
+      if (!room) return;
+      const player = room.players.get(socket.id);
+      if (player && !player.isAFK) {
+          player.isAFK = true;
+          console.log(`🧑 玩家 ${player.name} 超時，系統轉為託管`);
+          room.broadcastGameMessage(`玩家 ${player.name} 閒置超時，已轉為自動託管`, 'system');
           room.broadcastPlayerState();
       }
   });
