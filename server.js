@@ -2575,6 +2575,10 @@ calculateBestDiscard(player) {
   submitExchangeTiles(socketId, tileIds) {
       if (this.gameState !== 'exchanging') return { success: false, reason: '不在換牌階段' };
       
+      // 🌟 核心修正：必須先宣告並取得 player，才能在下面判斷 player.seatIndex！
+      const player = this.players.get(socketId);
+      if (!player) return { success: false, reason: '玩家不存在' };
+
       // 🌟 莊家決定數量的特權
       if (this.exchangeRequiredCount === 0 && player.seatIndex === this.dealer) {
           this.exchangeRequiredCount = tileIds.length; 
@@ -2592,7 +2596,7 @@ calculateBestDiscard(player) {
           this.broadcastPlayerState(); // 確保閒家按鈕解鎖！
       }
       
-      const player = this.players.get(socketId);
+      // 這裡原本的宣告就可以刪掉了，因為上面已經宣告過了
       if (this.exchangeData.has(socketId)) return { success: false, reason: '已提交過換牌' };
 
       // 取出要換的牌
