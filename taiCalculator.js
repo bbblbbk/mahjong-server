@@ -3393,13 +3393,12 @@ function checkDaSanSe147(hand, melds, allMelds = []) {
  * 檢查十六不搭
  * 牌型：三隻互相+3/-3萬子 + 三隻+3/-3筒子 + 三隻互相+3/-3索子 + 東南西北中發白各一隻 + 一隻以上描述的牌
  */
-function checkShiLiuBuDa(hand, melds) {
-  if (DEBUG) console.log('=== checkShiLiuBuDa 被調用 ===');
+// 🌟 核心升級：統一處理十六不搭與十六飛
+// requireSixteenFei = true 時，代表要檢查是否為十六飛
+function checkShiLiuBuDa(hand, melds, requireSixteenFei = false) {
+  if (DEBUG) console.log(`=== checkShiLiuBuDa 被調用 (要求十六飛: ${requireSixteenFei}) ===`);
   
-  if (melds.length > 0) {
-    if (DEBUG) console.log('有副露，返回 false');
-    return false;
-  }
+  if (melds.length > 0) return false;
   
   const allTiles = [...hand];
   const normalTiles = allTiles.filter(t => t.type !== 'flower');
@@ -3420,6 +3419,14 @@ function checkShiLiuBuDa(hand, melds) {
     }
   }
   
+  // 十六飛的嚴格條件：手牌【絕對不能】有對子！
+  // 所以數字牌總數必須剛好 9 張 (每種花色 3 張)，字牌必須剛好 7 種各一張
+  // 加起來 16 張單張，加上胡的那一張 (形成對子) 剛好 17 張。
+  if (requireSixteenFei) {
+      if (wanNumbers.length !== 3 || tongNumbers.length !== 3 || tiaoNumbers.length !== 3) return false;
+      if (new Set(honorTiles).size !== 7 || honorTiles.length !== 7) return false;
+  }
+  
   // ========== 定義 checkDifferences 內部函數 ==========
   function checkDifferences(numbers) {
     if (numbers.length === 3) {
@@ -3429,129 +3436,61 @@ function checkShiLiuBuDa(hand, melds) {
       return diff1 >= 3 && diff2 >= 3;
     }
     
-    if (numbers.length === 4) {
-      // 找出哪個數字出現2次（眼牌）
+    // 如果是十六飛，根本不可能走到 numbers.length === 4，因為上面已經攔截了！
+    if (numbers.length === 4 && !requireSixteenFei) {
       const counts = {};
-      for (let num of numbers) {
-        counts[num] = (counts[num] || 0) + 1;
-      }
+      for (let num of numbers) counts[num] = (counts[num] || 0) + 1;
       
-      // 找出眼牌數字（出現2次的那個）
       let eyeNum = null;
       for (let [num, count] of Object.entries(counts)) {
-        if (count === 2) {
-          eyeNum = parseInt(num);
-          break;
-        }
+        if (count === 2) { eyeNum = parseInt(num); break; }
       }
       
-      if (eyeNum === null) {
-        // 沒有出現2次的數字，嘗試每一種組合
-        for (let i = 0; i < numbers.length; i++) {
-          for (let j = i + 1; j < numbers.length; j++) {
-            const remaining = [];
-            for (let k = 0; k < numbers.length; k++) {
-              if (k !== i && k !== j) remaining.push(numbers[k]);
-            }
-            remaining.sort((a, b) => a - b);
-            const diff1 = remaining[1] - remaining[0];
-            const diff2 = remaining[2] - remaining[1];
-            if (diff1 >= 3 && diff2 >= 3) {
-              return true;
-            }
-          }
-        }
-        return false;
-      }
+      if (eyeNum === null) return false; // 4 張牌但沒有對子，代表違規
       
-      // 有眼牌數字，移除一張眼牌，保留一張作為3張的一部分
       const remaining = [];
       let eyeRemoved = false;
       for (let num of numbers) {
-        if (num === eyeNum && !eyeRemoved) {
-          eyeRemoved = true;  // 只移除一張眼牌
-        } else {
-          remaining.push(num);
-        }
+        if (num === eyeNum && !eyeRemoved) eyeRemoved = true;
+        else remaining.push(num);
       }
       remaining.sort((a, b) => a - b);
       
       if (remaining.length !== 3) return false;
-      
-      const diff1 = remaining[1] - remaining[0];
-      const diff2 = remaining[2] - remaining[1];
-      return diff1 >= 3 && diff2 >= 3;
+      return (remaining[1] - remaining[0] >= 3) && (remaining[2] - remaining[1] >= 3);
     }
     
     return false;
   }
-  // ========== checkDifferences 定義結束 ==========
   
-  // 字牌必須有全部7種
+  // 字牌檢查
   const requiredHonors = ['東', '南', '西', '北', '中', '發', '白'];
+  const uniqueHonors = new Set(honorTiles);
   for (let honor of requiredHonors) {
-    const count = honorTiles.filter(h => h === honor).length;
-    if (count === 0) {
-      if (DEBUG) console.log(`缺少字牌 ${honor}，返回 false`);
+    if (!uniqueHonors.has(honor)) return false;
+  }
+  
+  if (!requireSixteenFei) {
+      // 普通十六不搭檢查：只允許 1 個眼牌
+      const totalNumberTiles = wanNumbers.length + tongNumbers.length + tiaoNumbers.length;
+      if (honorTiles.length < 7 || honorTiles.length > 8) return false;
+      const expectedNumberTiles = (honorTiles.length === 7) ? 10 : 9;
+      if (totalNumberTiles !== expectedNumberTiles) return false;
+      
+      let hasFourCount = 0;
+      for (let suit of [wanNumbers, tongNumbers, tiaoNumbers]) {
+        if (suit.length !== 3 && suit.length !== 4) return false;
+        if (suit.length === 4) hasFourCount++;
+      }
+      if (honorTiles.length === 7 && hasFourCount !== 1) return false;
+      if (honorTiles.length === 8 && hasFourCount !== 0) return false;
+  }
+  
+  // 檢查差值
+  if (!checkDifferences(wanNumbers) || !checkDifferences(tongNumbers) || !checkDifferences(tiaoNumbers)) {
       return false;
-    }
   }
   
-  // 計算總牌數
-  const totalNumberTiles = wanNumbers.length + tongNumbers.length + tiaoNumbers.length;
-  const totalHonorTiles = honorTiles.length;
-  
-  // 字牌數量：7或8張
-  if (totalHonorTiles < 7 || totalHonorTiles > 8) {
-    if (DEBUG) console.log(`字牌數量 ${totalHonorTiles}，不是 7 或 8，返回 false`);
-    return false;
-  }
-  
-  // 數字牌數量：9或10張
-  const expectedNumberTiles = (totalHonorTiles === 7) ? 10 : 9;
-  if (totalNumberTiles !== expectedNumberTiles) {
-    if (DEBUG) console.log(`數字牌數量 ${totalNumberTiles}，預期 ${expectedNumberTiles}，返回 false`);
-    return false;
-  }
-  
-  // 每種花色：3或4張
-  const suits = [wanNumbers, tongNumbers, tiaoNumbers];
-  let hasFourCount = 0;
-  
-  for (let suit of suits) {
-    const len = suit.length;
-    if (len !== 3 && len !== 4) {
-      if (DEBUG) console.log(`花色長度 ${len}，不是 3 或 4，返回 false`);
-      return false;
-    }
-    if (len === 4) hasFourCount++;
-  }
-  
-  // 只能有一個花色有4張（眼牌在花色中），或者都沒有4張（眼牌在字牌中）
-  if (totalHonorTiles === 7 && hasFourCount !== 1) {
-    if (DEBUG) console.log(`字牌7張時，需要恰好一個花色有4張，實際有 ${hasFourCount} 個`);
-    return false;
-  }
-  if (totalHonorTiles === 8 && hasFourCount !== 0) {
-    if (DEBUG) console.log(`字牌8張時，不能有花色有4張，實際有 ${hasFourCount} 個`);
-    return false;
-  }
-  
-  // 檢查每種花色的差值
-  if (!checkDifferences(wanNumbers)) {
-    if (DEBUG) console.log('萬子差值不符合要求');
-    return false;
-  }
-  if (!checkDifferences(tongNumbers)) {
-    if (DEBUG) console.log('筒子差值不符合要求');
-    return false;
-  }
-  if (!checkDifferences(tiaoNumbers)) {
-    if (DEBUG) console.log('索子差值不符合要求');
-    return false;
-  }
-  
-  if (DEBUG) console.log('十六不搭檢查通過！');
   return true;
 }
 /**
@@ -3803,12 +3742,8 @@ function checkShiLiuBuDaXiangFeng(hand, melds) {
  * 與十六不搭相同，但需要檢查叫糊數量
  */
 function checkShiLiuBuDaShiLiuFei(hand, melds) {
-  // 先檢查是否為十六不搭
-  if (!checkShiLiuBuDa(hand, melds)) return false;
-  
-  // 十六飛需要叫糊16隻牌，這裡簡化為與十六不搭相同
-  // 實際需要在遊戲中判斷叫糊數量
-  return true;
+  // 傳入 true，啟用嚴格無對子(單釣)檢查
+  return checkShiLiuBuDa(hand, melds, true);
 }
 
 /**
@@ -5608,14 +5543,16 @@ try {
         // 一般叮牌、五子叮、十子叮的處理 (允許疊加門清叮)
         let hasMenqingTing = false;
 
-        // 1. 先判斷是否為門清叮
-      if (isTing && isMenqing && rules.handPatterns?.menqingTing?.enabled) {
+        /// 1. 先判斷是否為門清叮 (特殊牌型與坎坎糊不加計)
+        const isKankanhuForMenqing = rules.handPatterns?.kankanhu?.enabled && checkKankanhu(hand, melds, winType, winTile);
+        const excludeMenqing = isSpecialPattern || isKankanhuForMenqing || isHeavenEarthHumanWin;
+
+        if (isTing && isMenqing && !excludeMenqing && rules.handPatterns?.menqingTing?.enabled) {
             totalTai += rules.handPatterns.menqingTing.tai;
             taiDetails.push({ name: rules.handPatterns.menqingTing.name, tai: rules.handPatterns.menqingTing.tai });
             hasMenqingTing = true;
         } 
-        // 🌟 核心修正：刪除 !isSpecialPattern，讓特殊牌型也能享受門清加成！
-        else if (isMenqing && !isHeavenEarthHumanWin && rules.handPatterns?.menqing?.enabled) {
+        else if (isMenqing && !excludeMenqing && rules.handPatterns?.menqing?.enabled) {
             // 沒有叮牌的純門清
             totalTai += rules.handPatterns.menqing.tai;
             taiDetails.push({ name: rules.handPatterns.menqing.name, tai: rules.handPatterns.menqing.tai });
@@ -5652,7 +5589,7 @@ try {
         }
     }
    // 2. 門清自摸 (同樣刪除 !isSpecialPattern 的限制)
-    if (isMenqing && isSelfDraw(winType) && !isHeavenEarthHumanWin && !isHeavenOrEarth && rules.handPatterns?.menqingSelfDraw?.enabled) {
+  if (isMenqing && isSelfDraw(winType) && !excludeMenqing && !isHeavenOrEarth && rules.handPatterns?.menqingSelfDraw?.enabled) {
         totalTai += rules.handPatterns.menqingSelfDraw.tai;
         taiDetails.push({ name: rules.handPatterns.menqingSelfDraw.name, tai: rules.handPatterns.menqingSelfDraw.tai });
     } else if (isSelfDraw(winType) && !isHeavenEarthHumanWin) {
