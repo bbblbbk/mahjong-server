@@ -308,15 +308,13 @@ function checkOnlyWaitAndPairWait(hand, melds, winTile, winType, allMelds, eyeTi
         if (res && res.melds && res.melds.length === 5 && res.eyeTile) winningTiles.push(`honor_${h}`);
     }
 
-   const isOnlyWait = winningTiles.length === 1;
+    const isOnlyWait = winningTiles.length === 1;
 
     let isPairWait = false;
-    // 🌟 核心修正：更精準的對碰判定！不再盲目算數量，直接檢查拆解出的胡牌面子！
     if (winningTiles.length === 2 && allMelds && eyeTile) {
         const winVal = parseInt(winTile.value);
         const winSuit = winTile.suit;
         
-        // 檢查贏的這張牌，是否在最終拆解出的面子裡完美形成了一組「刻子」
         const formsPong = allMelds.some(m => 
             ['pong', 'anKong', 'mingKong', 'kong'].includes(m.type) && 
             m.tiles && m.tiles.length > 0 &&
@@ -324,7 +322,6 @@ function checkOnlyWaitAndPairWait(hand, melds, winTile, winType, allMelds, eyeTi
             (isNaN(winVal) ? m.tiles[0].value === winTile.value : parseInt(m.tiles[0].value) === winVal)
         );
         
-        // 檢查眼牌是否剛好是另一個聽牌目標
         const t1_key = winningTiles[0]; 
         const t2_key = winningTiles[1];
         const eye_key = `${eyeTile.suit}_${eyeTile.value}`;
@@ -334,29 +331,11 @@ function checkOnlyWaitAndPairWait(hand, melds, winTile, winType, allMelds, eyeTi
         }
     }
 
+    // 🌟 假獨 (Fake Only Wait) 修正：
+    // 聽多張牌 (winningTiles.length > 1)，但胡的這張牌在最佳組合中剛好作眼 (和單吊獨獨的型態類似)
     let isFakeOnlyWait = false;
-    if (winningTiles.length > 1 && !isPairWait) {
-        // 🌟 核心修正：假獨必須「無法形成兩面聽」。
-        let isTwoSided = false;
-        const winSuit = winTile.suit;
-        const winVal = parseInt(winTile.value);
-
-        if (!isNaN(winVal) && allMelds && allMelds.length > 0) {
-            for (let m of allMelds) {
-                if (m.type === 'chow' && m.tiles[0].suit === winSuit) {
-                    const nums = m.tiles.map(t => parseInt(t.value)).sort((a,b)=>a-b);
-                    if (nums.includes(winVal)) {
-                        if (nums[0] === winVal && winVal < 7 && winningTiles.includes(`${winSuit}_${winVal + 3}`)) {
-                            isTwoSided = true; // 作為前端 (例如聽 1,4 的 1)
-                        } else if (nums[2] === winVal && winVal > 3 && winningTiles.includes(`${winSuit}_${winVal - 3}`)) {
-                            isTwoSided = true; // 作為後端 (例如聽 1,4 的 4)
-                        }
-                    }
-                }
-            }
-        }
-        
-        if (!isTwoSided) {
+    if (winningTiles.length > 1 && !isPairWait && eyeTile && winTile) {
+        if (eyeTile.suit === winTile.suit && eyeTile.value === winTile.value) {
             isFakeOnlyWait = true;
         }
     }
@@ -3957,15 +3936,18 @@ function checkAnKongReward(hand, melds) {
  * 春、夏、秋、冬 或 梅、蘭、竹、菊
  */
 function checkYiTaiCaoReward(hand, melds, flowers = []) {
-  // 🌟 修正：改從參數提取花牌
-  const flowerValues = flowers ? flowers.map(f => f.value) : [];
-  const springSet = ['春', '夏', '秋', '冬'];
-  const summerSet = ['梅', '蘭', '竹', '菊'];
-  
-  const hasSpringSet = springSet.every(f => flowerValues.includes(f));
-  const hasSummerSet = summerSet.every(f => flowerValues.includes(f));
-  
-  return hasSpringSet || hasSummerSet;
+    const flowerValues = flowers ? flowers.map(f => f.value) : [];
+    
+    const has1 = flowerValues.includes('春') || flowerValues.includes('梅');
+    const has2 = flowerValues.includes('夏') || flowerValues.includes('蘭');
+    const has3 = flowerValues.includes('秋') || flowerValues.includes('竹');
+    const has4 = flowerValues.includes('冬') || flowerValues.includes('菊');
+    
+    // 如果是純色的春夏秋冬或梅蘭竹菊，應計為「一台花」，不可與「一台草」重複
+    const isPureSpring = flowerValues.includes('春') && flowerValues.includes('夏') && flowerValues.includes('秋') && flowerValues.includes('冬');
+    const isPureSummer = flowerValues.includes('梅') && flowerValues.includes('蘭') && flowerValues.includes('竹') && flowerValues.includes('菊');
+    
+    return has1 && has2 && has3 && has4 && !isPureSpring && !isPureSummer;
 }
 
 /**
