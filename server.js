@@ -200,12 +200,12 @@ this.turnTimer = null;   // 🌟 伺服器打牌倒數計時器
   }
 
   // 🌟 統一計時引擎：無論是摸牌還是吃碰槓，都會啟動絕對防線！
-  startPlayerTurnTimer(player, aiDelay = 1000) {
+ startPlayerTurnTimer(player, aiDelay = 1500) { // 預設改為 1.5 秒
       if (this.turnTimer) clearTimeout(this.turnTimer);
       
-      // 🌟 核心修正：如果是「託管中」的真人，直接 0 毫秒秒出牌！AI 則保留擬真延遲。
       if (player.isAI || player.isAFK) {
-          const actualDelay = player.isAFK ? 0 : aiDelay; 
+          // 託管或 AI，給予 1.5 秒 ~ 2 秒的擬真思考時間
+          const actualDelay = player.isAFK ? 1000 : aiDelay + Math.random() * 500; 
           console.log(`🤖 AI/託管 ${player.name} 在 ${actualDelay}ms 後打牌`);
           this.turnTimer = setTimeout(() => { 
               if (this.gameState !== 'finished') {
@@ -213,7 +213,7 @@ this.turnTimer = null;   // 🌟 伺服器打牌倒數計時器
               }
           }, actualDelay);
       } else {
-          // 🌟 真人玩家開啟伺服器端倒數計時 (容忍前端時間 + 2秒網路延遲)
+          // 真人玩家開啟伺服器端倒數計時
           this.turnTimer = setTimeout(() => {
               if (this.gameState === 'playing' && this.currentTurn === player.seatIndex) {
                   console.log(`⏳ 玩家 ${player.name} 出牌超時，強制轉為託管！`);
@@ -899,9 +899,10 @@ checkActionsAfterDiscard(discarderSocketId, tile) {
         }
         
         // AI 玩家自動回應
-        for (let ai of aiPlayers) {
-            const delay = 200 + Math.random() * 200;
-            // AI 選擇最高優先級的操作
+      for (let ai of aiPlayers) {
+            // 從原本的 200ms 改為 1200ms ~ 1800ms
+            const delay = 1200 + Math.random() * 600; 
+            
             const highestPriority = Math.max(...ai.actions.map(a => a.priority));
             const aiAction = ai.actions.find(a => a.priority === highestPriority);
             console.log(`🤖 排程 AI ${this.players.get(ai.socketId)?.name} 在 ${delay}ms 後回應: ${aiAction.type}`);
@@ -2164,7 +2165,8 @@ aiDiscard(player) {
       
       if (this.checkCanWin(player.socketId)) {
           console.log(`🤖 AI ${player.name} 發現可以自摸！立刻胡牌！`);
-          this.playerWin(player.socketId);
+          // 稍微延遲 1 秒再胡，不要瞬間就結束
+          setTimeout(() => { this.playerWin(player.socketId); }, 1000);
           return;
       }
 
@@ -3867,7 +3869,6 @@ socket.on('surrenderPull', (data) => {
           const room = gameManager.getPlayerRoom(socket.id);
           if (!room || !room.pendingActionQueue) return;
 
-          // 確認該玩家是不是真的在允許操作的名單裡
           if (!room.waitingForAction || !room.waitingForAction.includes(socket.id)) return;
 
           const player = room.players.get(socket.id);
@@ -3882,34 +3883,34 @@ socket.on('surrenderPull', (data) => {
               priority: ACTION_PRIORITY[actionType]
           });
 
-          // 2. 從等待名單中剔除該玩家，避免重複發送
+          // 2. 從等待名單中剔除該玩家
           room.waitingForAction = room.waitingForAction.filter(id => id !== socket.id);
           console.log(`收到玩家 ${player.name} 選擇 [${actionType}]，剩餘等待: [${room.waitingForAction.join(', ') || '無'}]`);
 
-          // 3. 🌟 智能截斷結算邏輯 (Smart Fast-Forward)
+          // 3. 智能截斷邏輯
           if (room.waitingForAction.length === 0) {
               // 全員都回覆了，立刻執行結算！
               room.resolvePendingActions();
           } else {
-              // 還有玩家沒回覆，檢查目前的「最高優先級」是否已經無敵？
+              // 還有玩家沒回覆，檢查目前「已收到」的最高優先級
               const maxSubmittedPriority = Math.max(...room.pendingActionQueue.responses.map(r => r.priority));
               
+              // 找出「還在猶豫中」的玩家，他們手上的最高可能優先級
               let maxPendingPriority = 0;
               if (room.pendingActionQueue.expectedActions) {
-                  // 找出還沒按按鈕的玩家，他們手上的最高優先級是多少？
                   const pendingActions = room.pendingActionQueue.expectedActions.filter(a => room.waitingForAction.includes(a.player));
                   if (pendingActions.length > 0) {
                       maxPendingPriority = Math.max(...pendingActions.map(a => a.priority));
                   }
               }
 
-              // 如果目前已提交的最高優先級，嚴格大於剩下沒按的人能按的最高優先級
-              // 就不用等他們了，直接截斷結算！
-              // (注意：用 > 而不是 >=，是為了保留一炮多響(雙胡)等待其他胡牌玩家的機會)
+              // 🌟 核心防呆：如果目前已提交的最高優先級（例如有人按了碰），
+              // 嚴格大於還沒按的人能按的最高優先級（例如剩下的只能吃），就不用等他們了！
               if (maxSubmittedPriority > maxPendingPriority && maxSubmittedPriority > ACTION_PRIORITY['pass']) {
                   console.log(`⚡ 即時截斷！目前的最高優先級 ${maxSubmittedPriority} 已無敵，不等其他人了！`);
                   room.resolvePendingActions();
               }
+              // 如果是吃(低順位)先按了，因為不滿足 > maxPendingPriority (可能還有人能碰)，所以不會提早結算，系統會乖乖等！
           }
       } catch (error) {
           console.error(`處理操作 ${actionType} 錯誤:`, error);
