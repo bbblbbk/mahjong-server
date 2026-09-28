@@ -514,13 +514,24 @@ processPulling(winnerSeat, loserSeat, currentScore, isSelfDraw) {
 
   broadcastPlayerState() { io.to(this.roomId).emit('playersUpdate', this.getPublicPlayersState()); }
 
-  broadcastGameMessage(message, type = 'info') {
-    // 🌟 核心修正：移除 timestamp！
-    // 防止 Unity C# 端的 GameMessageData 因 int 溢位導致整個封包解析崩潰
-    io.to(this.roomId).emit('gameMessage', { message: message, type: type });
-    
-    // 伺服器內部的 log 保留 timestamp 沒關係
-    this.gameLog.push({ message, type, timestamp: Date.now() });
+ broadcastGameMessage(messageText, messageType = 'info') {
+      // 🌟 終極散彈槍封包：涵蓋所有可能的大小寫與欄位名稱！
+      // 確保 Unity 的 C# JsonUtility 無論如何都能精準抓到資料，徹底消滅解析 Null 崩潰！
+      const payload = { 
+          message: messageText, 
+          Message: messageText,
+          msg: messageText,
+          Msg: messageText,
+          type: messageType, 
+          Type: messageType,
+          timestamp: 0,      // 傳入安全的 0，防止 13 位數的 Date.now() 造成 C# int 溢位當機
+          Timestamp: 0
+      };
+      
+      io.to(this.roomId).emit('gameMessage', payload);
+      
+      // 伺服器內部的 log 保持原樣即可
+      this.gameLog.push({ message: messageText, type: messageType, timestamp: Date.now() });
   }
 
   getPublicGameState() {
