@@ -515,7 +515,11 @@ processPulling(winnerSeat, loserSeat, currentScore, isSelfDraw) {
   broadcastPlayerState() { io.to(this.roomId).emit('playersUpdate', this.getPublicPlayersState()); }
 
   broadcastGameMessage(message, type = 'info') {
-    io.to(this.roomId).emit('gameMessage', { message, type, timestamp: Date.now() });
+    // 🌟 核心修正：移除 timestamp！
+    // 防止 Unity C# 端的 GameMessageData 因 int 溢位導致整個封包解析崩潰
+    io.to(this.roomId).emit('gameMessage', { message: message, type: type });
+    
+    // 伺服器內部的 log 保留 timestamp 沒關係
     this.gameLog.push({ message, type, timestamp: Date.now() });
   }
 
