@@ -1424,10 +1424,13 @@ function checkPinghu(hand, melds) {
     // 分析手牌，獲取面子和眼牌
     const { melds: analyzedMelds, eyeTile } = analyzeHandMelds(hand, melds);
     
+    // 🌟 核心防呆：港台麻將必須剛好 5 組面子 + 1 雀頭
+    if (!analyzedMelds || analyzedMelds.length !== 5) return false;
+    
     // 檢查是否所有面子都是順子
     for (let meld of analyzedMelds) {
         if (meld.type !== 'chow') {
-            return false;  // 有刻子，不是平糊
+            return false;  // 有刻子或特殊型態，不是平糊
         }
     }
     
@@ -5702,12 +5705,38 @@ try {
 }
     
         // 9. 將眼
+ // 9. 將眼
     try {
       if (rules.handPatterns?.generalEye?.enabled) {
-        // 🌟 核心修正：必須強制傳入系統精確算出的 eyeTile，絕對不讓系統盲猜！
-        if (checkGeneralEye(hand, melds, { ...extraInfo, eyeTile: eyeTile })) {
-          totalTai += rules.handPatterns.generalEye.tai;
-          taiDetails.push({ name: rules.handPatterns.generalEye.name, tai: rules.handPatterns.generalEye.tai });
+        // 🌟 核心修正：嚦咕嚦咕支援多重將眼 (2, 5, 8 的對子全算)
+        if (isLikwuPattern || isEightPairsLikwu) {
+            let jiangCount = 0;
+            const normalTiles = hand.filter(t => t.type !== 'flower');
+            const numCounts = {};
+            
+            // 統計手牌數字
+            for (let t of normalTiles) {
+                if (t.type === 'number') {
+                    numCounts[t.value] = (numCounts[t.value] || 0) + 1;
+                }
+            }
+            
+            // 找出 2, 5, 8 的對子數量 (向下取整除以2，4張算2對，3張算1對)
+            if (numCounts['2']) jiangCount += Math.floor(numCounts['2'] / 2);
+            if (numCounts['5']) jiangCount += Math.floor(numCounts['5'] / 2);
+            if (numCounts['8']) jiangCount += Math.floor(numCounts['8'] / 2);
+
+            if (jiangCount > 0) {
+                const jiangTai = rules.handPatterns.generalEye.tai;
+                totalTai += jiangTai * jiangCount;
+                taiDetails.push({ name: `將眼(${jiangCount}對)`, tai: jiangTai * jiangCount });
+            }
+        } else {
+            // 🌟 一般牌型的單一將眼計算
+            if (checkGeneralEye(hand, melds, { ...extraInfo, eyeTile: eyeTile })) {
+              totalTai += rules.handPatterns.generalEye.tai;
+              taiDetails.push({ name: rules.handPatterns.generalEye.name, tai: rules.handPatterns.generalEye.tai });
+            }
         }
       }
     } catch (e) {
@@ -6304,7 +6333,11 @@ if (!hasShuangShu && rules.handPatterns?.sanShu?.enabled && checkSanShu(hand, me
       // 🌟 核心修正：把 flowers 參數傳進去！
       const hasWuZiHuaDaPingResult = (rules.handPatterns?.wuZiHuaDaPing?.enabled && checkWuZiHuaDaPing(hand, melds, flowers));
       const skipWuHuaWuZi = hasNoFlowerNoHonor || hasWuZiHuaDaPingResult || isKaLongHuoChe;
-      
+    
+      if (!isSpecialPattern && rules.handPatterns?.pinghu?.enabled && !hasWuZiHuaDaPingResult && checkPinghu(hand, melds)) {
+        totalTai += rules.handPatterns.pinghu.tai;
+        taiDetails.push({ name: rules.handPatterns.pinghu.name, tai: rules.handPatterns.pinghu.tai });
+      }
       // 無字花 (10番)
       if (rules.basicPatterns?.noFlowerNoHonor?.enabled && hasNoFlowerNoHonor && !hasWuZiHuaDaPingResult) {
         totalTai += rules.basicPatterns.noFlowerNoHonor.tai;

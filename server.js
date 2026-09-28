@@ -3496,7 +3496,34 @@ io.on('connection', (socket) => {
         room.broadcastGameMessage("🛠️ [Debug] 已配置暗槓測試環境！", "system");
     } catch (error) { console.error('暗槓測試錯誤:', error); }
   });
+// 🌟 [作弊通道] 一鍵觸發特別賞罰 (測試用)
+  socket.on('debugRewardPenalty', (data) => {
+    try {
+        const room = gameManager.getPlayerRoom(socket.id);
+        if (!room || room.gameState !== 'playing') return;
+        const player = room.players.get(socket.id);
+        if (!player) return;
 
+        // 決定是收錢還是罰錢 (可以透過 data 傳入，預設為收錢)
+        const type = (data && data.type) ? data.type : 'collect'; 
+        // 決定名目與底數
+        const reason = (data && data.reason) ? data.reason : '測試神功';
+        const baseAmount = (data && data.amount) ? data.amount : 2;
+
+        console.log(`🛠️ [Debug] 玩家 ${player.name} 觸發特別賞罰測試！`);
+        
+        // 直接呼叫房間內建的即時轉帳引擎
+        room.executeInstantPayout(
+            player.seatIndex, 
+            [0, 1, 2, 3], // 預設向全場另外三家收/付錢
+            baseAmount, 
+            reason, 
+            type
+        );
+    } catch (error) { 
+        console.error('特別賞罰測試錯誤:', error); 
+    }
+  });
  socket.on('playTile', (tileData) => {
     console.log('收到 playTile 事件');
     try {
