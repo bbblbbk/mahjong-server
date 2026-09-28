@@ -514,24 +514,25 @@ processPulling(winnerSeat, loserSeat, currentScore, isSelfDraw) {
 
   broadcastPlayerState() { io.to(this.roomId).emit('playersUpdate', this.getPublicPlayersState()); }
 
- broadcastGameMessage(messageText, messageType = 'info') {
-      // 🌟 終極散彈槍封包：涵蓋所有可能的大小寫與欄位名稱！
-      // 確保 Unity 的 C# JsonUtility 無論如何都能精準抓到資料，徹底消滅解析 Null 崩潰！
+ // 🌟 核心修正：加入預設值，並且只傳送 C# 認識的三個小寫欄位！
+  broadcastGameMessage(messageText, messageType = 'info') {
+      
+      // 確保傳入的是純字串
+      const safeMessage = typeof messageText === 'string' ? messageText : String(messageText);
+      const safeType = typeof messageType === 'string' ? messageType : 'info';
+
+      // 🌟 終極純淨封包：只保留 C# GameMessageData 宣告的這三個欄位
+      // timestamp 傳送空字串，徹底消滅解析崩潰！
       const payload = { 
-          message: messageText, 
-          Message: messageText,
-          msg: messageText,
-          Msg: messageText,
-          type: messageType, 
-          Type: messageType,
-          timestamp: 0,      // 傳入安全的 0，防止 13 位數的 Date.now() 造成 C# int 溢位當機
-          Timestamp: 0
+          message: safeMessage, 
+          type: safeType, 
+          timestamp: ""  
       };
       
       io.to(this.roomId).emit('gameMessage', payload);
       
       // 伺服器內部的 log 保持原樣即可
-      this.gameLog.push({ message: messageText, type: messageType, timestamp: Date.now() });
+      this.gameLog.push({ message: safeMessage, type: safeType, timestamp: Date.now() });
   }
 
   getPublicGameState() {
