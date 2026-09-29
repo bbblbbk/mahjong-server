@@ -3930,30 +3930,22 @@ socket.on('surrenderPull', (data) => {
           room.waitingForAction = room.waitingForAction.filter(id => id !== socket.id);
           console.log(`收到玩家 ${player.name} 選擇 [${actionType}]，剩餘等待: [${room.waitingForAction.join(', ') || '無'}]`);
 
-          // 3. 智能截斷邏輯
+          // 3. 🌟 極速截斷邏輯 (Ultra Fast-Forward)
           if (room.waitingForAction.length === 0) {
-              // 全員都回覆了，立刻執行結算！
+              // 情況 A：全員都回覆了，立刻執行結算！
               room.resolvePendingActions();
           } else {
-              // 還有玩家沒回覆，檢查目前「已收到」的最高優先級
-              const maxSubmittedPriority = Math.max(...room.pendingActionQueue.responses.map(r => r.priority));
-              
-              // 找出「還在猶豫中」的玩家，他們手上的最高可能優先級
-              let maxPendingPriority = 0;
-              if (room.pendingActionQueue.expectedActions) {
-                  const pendingActions = room.pendingActionQueue.expectedActions.filter(a => room.waitingForAction.includes(a.player));
-                  if (pendingActions.length > 0) {
-                      maxPendingPriority = Math.max(...pendingActions.map(a => a.priority));
-                  }
-              }
+              // 情況 B：還有人沒回覆，但我們目前收到了一個「高優先級」的動作！
+              const currentActionPriority = ACTION_PRIORITY[actionType];
 
-              // 🌟 核心防呆：如果目前已提交的最高優先級（例如有人按了碰），
-              // 嚴格大於還沒按的人能按的最高優先級（例如剩下的只能吃），就不用等他們了！
-              if (maxSubmittedPriority > maxPendingPriority && maxSubmittedPriority > ACTION_PRIORITY['pass']) {
-                  console.log(`⚡ 即時截斷！目前的最高優先級 ${maxSubmittedPriority} 已無敵，不等其他人了！`);
+              // 🌟 核心判定：如果玩家剛剛按下的操作是「胡(4)」、「槓(3)」或「碰(3)」
+              // 就代表這個操作的優先級已經徹底輾壓了最低階的「吃(2)」與「過(1)」！
+              // 此時我們絕對不需要再去等那個只能「吃」或「過」的下家，直接一刀斬斷等待，立刻執行！
+              if (currentActionPriority >= 3) {
+                  console.log(`⚡ 極速截斷！收到高優先級操作 [${actionType}]，瞬間結算，不等下家了！`);
                   room.resolvePendingActions();
               }
-              // 如果是吃(低順位)先按了，因為不滿足 > maxPendingPriority (可能還有人能碰)，所以不會提早結算，系統會乖乖等！
+              // 若按下的是吃(2)或過(1)，系統依然會乖乖等待其他可能還沒按碰(3)的人。
           }
       } catch (error) {
           console.error(`處理操作 ${actionType} 錯誤:`, error);
