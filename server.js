@@ -444,6 +444,7 @@ processPulling(winnerSeat, loserSeat, currentScore, isSelfDraw) {
       // ✅ 加入叮牌相關屬性
       isAFK: false, // 🌟 新增託管屬性
       isTing: false,
+      passedWin: false,
       tingType: null,
       isEatTing: false,
       isMenqingTing: false,
@@ -744,7 +745,11 @@ processPulling(winnerSeat, loserSeat, currentScore, isSelfDraw) {
     const player = this.players.get(socketId);
     this.sortHand(player);
     if (!player) return { success: false, reason: '玩家不存在' };
-
+    // 🌟 【過水機制】判斷這張牌打出前，是否可以自摸卻放棄了？
+    let isPassingSelfDraw = false;
+    if (!player.isTing && this.checkCanWin(socketId)) {
+        isPassingSelfDraw = true;
+    }
     // 🌟 1. 叮牌限制檢查：必須放在 splice 之前！
     if (player.isTing) {
         if (player.hasDrawnAfterTing) {
@@ -773,7 +778,7 @@ processPulling(winnerSeat, loserSeat, currentScore, isSelfDraw) {
 
     // ✅ 成功出牌後清空禁打限制
     player.restrictedDiscards = [];
-
+    player.passedWin = isPassingSelfDraw;
     this.sortHand(player);
     
     tile.discardedBy = player.seatIndex;
@@ -1190,7 +1195,10 @@ checkLowerPriorityActions(tile) {
 checkCanWin(socketId, tile = null) {
       const player = this.players.get(socketId);
       if (!player) return false;
-      
+      // 🌟 【過水機制】無叮牌且處於過水狀態，禁止胡牌 (UI 也不會彈出按鈕)！
+      if (!player.isTing && player.passedWin) {
+          return false;
+      }
       let evalHand = player.hand;
       let winType = 'selfDraw';
       
@@ -2033,6 +2041,20 @@ scheduleNextTurn(delay = 300) {
           this.scheduleNextTurn(300);
           return;
       }
+      // 🌟 【過水機制】檢查有沒有人「可以胡出銃牌」卻放棄了
+      if (this.pendingActionQueue.expectedActions) {
+          const expectedWins = this.pendingActionQueue.expectedActions.filter(a => a.type === 'win');
+          for (let expected of expectedWins) {
+              const p = this.players.get(expected.player);
+              if (p && !p.isTing) {
+                  const response = this.pendingActionQueue.responses.find(r => r.socketId === expected.player);
+                  // 沒有回應(超時) 或 回應的動作不是 win (選擇了碰、吃、過)
+                  if (!response || response.action !== 'win') {
+                      p.passedWin = true;
+                  }
+              }
+          }
+      }
 
       // 1. 依照優先級由大到小排序
       const responses = this.pendingActionQueue.responses.sort((a, b) => b.priority - a.priority);
@@ -2460,6 +2482,7 @@ calculateBestDiscard(player) {
                 hasWon: false, hasDiscarded: false, isAI: true, 
                 // ✅ 叮牌相關屬性
                 isTing: false,
+                passedWin: false,
                 tingType: null,
                 isEatTing: false,
                 isMenqingTing: false,
@@ -2815,6 +2838,7 @@ endGame(reason = 'normal') {
         player.flowers = [];
         player.hasWon = false;
         player.isTing = false;
+        player.passedWin = false; // 🌟 重置過水狀態
         player.tingType = null;
         player.isEatTing = false;
         player.isMenqingTing = false;
@@ -3581,11 +3605,12 @@ if (currentPlayer.isAFK) {
                 players: room.getPublicPlayersState(), 
                 privateState: room.getPrivatePlayerState(socket.id) 
             });
-        } else {
+       } else {
             console.log(`❌ 違規或無效出牌: ${result.reason}`);
             
-            // 🌟 核心防禦：通知前端出牌失敗，並強制重新同步狀態 (把原本丟到桌上的殘影牌拉回手牌中)
-            socket.emit('gameMessage', { message: result.reason, type: 'system' });
+            // 🌟 核心防禦：通知前端出牌失敗，並強制重新同步狀態 
+            // (加入 timestamp: "" 確保符合 Unity 的 GameMessageData 格式)
+            socket.emit('gameMessage', { message: result.reason, type: 'system', timestamp: "" });
             socket.emit('privateStateUpdate', { 
                 success: true, 
                 gameState: room.getPublicGameState(), 
@@ -3593,6 +3618,18 @@ if (currentPlayer.isAFK) {
                 privateState: room.getPrivatePlayerState(socket.id) 
             });
             socket.emit('gameStateUpdate', room.getPublicGameState());
+
+            // 🌟🌟🌟 終極修復：出牌違規被退回後，強迫重發 yourTurn 事件，讓前端解鎖畫面與出牌按鈕！
+            socket.emit('yourTurn', { 
+                isFirstTurn: false, 
+                drawnTile: null, // 牌已經被退回手牌裡了，不需要補牌動畫
+                canWin: room.checkCanWin(socket.id), 
+                canTing: !currentPlayer.isAI ? room.checkCanTing(socket.id) : false,
+                isTing: currentPlayer.isTing,
+                countdownSec: room.settings.timeLimit || 15,
+                tingDetails: currentPlayer.isAI ? [] : room.generateTingDetails(socket.id),
+                privateState: room.getPrivatePlayerState(socket.id) 
+            });
         }
     } catch (error) { console.error('playTile 錯誤:', error); }
   });

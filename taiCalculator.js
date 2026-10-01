@@ -6510,8 +6510,9 @@ let hasQingLong = false;
 
         if (allMelds && allMelds.length > 0) {
             for (let m of allMelds) {
-                // 🌟 核心修正：檢查這個面子是不是已經碰/槓在地上的
-                const isExisting = melds.includes(m);
+                // 🌟 核心修正：改用麻將牌的唯一 ID 來精準比對！
+                // 徹底解決陣列重組後參考遺失，導致「明碰」被誤判為「暗刻」的惡性 Bug！
+                const isExisting = melds.some(orig => orig.tiles && m.tiles && orig.tiles[0].id === m.tiles[0].id);
 
                 if (isExisting) {
                     // 已經在地上的副露，只有「暗槓」才算暗刻！(明槓/補槓都不算)
