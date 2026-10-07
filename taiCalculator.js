@@ -2225,12 +2225,7 @@ function checkManTingFang(hand, melds) {
   // 找出所有面子共同包含的數字
   const commonNumbers = getCommonNumbersInAllMelds(hand, melds);
   
-  // 滿亭芳：共同數字數量為 1
-  if (commonNumbers.size !== 1) return false;
-  
-  // 眼牌必須是這個數字（不能是字牌）
-  const commonNum = Array.from(commonNumbers)[0];
-  if (eyeNumber === null || eyeNumber !== commonNum) return false;
+ if (eyeNumber === null || !commonNumbers.has(eyeNumber)) return false;
   
   return true;
 }
@@ -6334,29 +6329,33 @@ if (!hasShuangShu && rules.handPatterns?.sanShu?.enabled && checkSanShu(hand, me
       const hasWuZiHuaDaPingResult = (rules.handPatterns?.wuZiHuaDaPing?.enabled && checkWuZiHuaDaPing(hand, melds, flowers));
       const skipWuHuaWuZi = hasNoFlowerNoHonor || hasWuZiHuaDaPingResult || isKaLongHuoChe;
     
+      // ✅ 1. 平糊 (5番) - 這裡只留一次，並帶有 !isSpecialPattern 防呆
       if (!isSpecialPattern && rules.handPatterns?.pinghu?.enabled && !hasWuZiHuaDaPingResult && checkPinghu(hand, melds)) {
         totalTai += rules.handPatterns.pinghu.tai;
         taiDetails.push({ name: rules.handPatterns.pinghu.name, tai: rules.handPatterns.pinghu.tai });
       }
-      // 無字花 (10番)
+
+      // ✅ 2. 無字花 (10番)
       if (rules.basicPatterns?.noFlowerNoHonor?.enabled && hasNoFlowerNoHonor && !hasWuZiHuaDaPingResult) {
         totalTai += rules.basicPatterns.noFlowerNoHonor.tai;
         taiDetails.push({ name: rules.basicPatterns.noFlowerNoHonor.name, tai: rules.basicPatterns.noFlowerNoHonor.tai });
       }
-      if (rules.handPatterns?.pinghu?.enabled && !hasWuZiHuaDaPingResult && checkPinghu(hand, melds)) {
-        totalTai += rules.handPatterns.pinghu.tai;
-        taiDetails.push({ name: rules.handPatterns.pinghu.name, tai: rules.handPatterns.pinghu.tai });
-      }
+
+      // 🗑️ (這裡原本多餘的第二次平糊已經被刪除了)
+
+      // ✅ 3. 無字花大平 (20番)
       if (rules.handPatterns?.wuZiHuaDaPing?.enabled && hasWuZiHuaDaPingResult) {
         totalTai += rules.handPatterns.wuZiHuaDaPing.tai;
         taiDetails.push({ name: rules.handPatterns.wuZiHuaDaPing.name, tai: rules.handPatterns.wuZiHuaDaPing.tai });
       }
       
-      // 🌟 關鍵修正：如果已經拿了進階的「無字花」(10番)，就不應該再重複加計基礎的「無花」(2番)！
+      // ✅ 4. 無花 (2番) - 關鍵修正：如果已經拿了進階的「無字花」(10番)，就不應該再重複加計基礎的「無花」(2番)！
       if (rules.handPatterns?.wuHua?.enabled && flowers.length === 0 && !hasNoFlowerNoHonor && !hasWuZiHuaDaPingResult) {
         totalTai += rules.handPatterns.wuHua.tai;
         taiDetails.push({ name: rules.handPatterns.wuHua.name, tai: rules.handPatterns.wuHua.tai });
       }
+
+      // ✅ 5. 無字 (2番)
       if (rules.handPatterns?.wuZi?.enabled && !skipWuHuaWuZi && checkWuZi(hand, melds)) {
         totalTai += rules.handPatterns.wuZi.tai;
         taiDetails.push({ name: rules.handPatterns.wuZi.name, tai: rules.handPatterns.wuZi.tai });
