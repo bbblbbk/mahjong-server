@@ -1213,23 +1213,21 @@ checkCanWin(socketId, tile = null) {
       console.log(`=== checkCanWin 詳細 ===`);
       console.log(`玩家: ${player.name}, 手牌=${normalTiles.length}張, 副露=${player.melds.length}組`);
       
-      // 1. 檢查是否為標準胡牌型 (4面子 + 1雀頭)
-      let isStandardWin = this.canFormWinningHand(normalTiles, player.melds);
-      
-      // 2. 檢查是否為特殊牌型 (十三么, 十六不搭, 嚦咕等)
-      let isSpecialWin = false;
-      try {
-          if (taiCalculator.checkShiSanYao(evalHand, player.melds) || 
-              taiCalculator.checkShiLiuBuDa(evalHand, player.melds) ||
-              taiCalculator.checkShiLiuBuDaShe(evalHand, player.melds) ||
-              taiCalculator.checkShiLiuBuDaXiangFeng(evalHand, player.melds) ||
-              taiCalculator.checkLikwu(evalHand, player.melds) ||
-              taiCalculator.checkEightPairsLikwu(evalHand, player.melds)) {
-              isSpecialWin = true;
-          }
-      } catch (e) {
-          console.error('特殊牌型預檢錯誤:', e);
-      }
+    // server_3.js - checkCanWin 中的預檢邏輯
+let isStandardWin = this.canFormWinningHand(normalTiles, player.melds);
+let isSpecialWin = false;
+try {
+    if (taiCalculator.checkShiSanYao(evalHand, player.melds) || 
+        taiCalculator.checkShiLiuBuDa(evalHand, player.melds) ||
+        taiCalculator.checkShiLiuBuDaShe(evalHand, player.melds) ||
+        taiCalculator.checkShiLiuBuDaXiangFeng(evalHand, player.melds) ||
+        taiCalculator.checkLikwu(evalHand, player.melds, tile) || // ✅ 補上 tile
+        taiCalculator.checkEightPairsLikwu(evalHand, player.melds, tile)) { // ✅ 補上 tile
+        isSpecialWin = true;
+    }
+} catch (e) {
+    console.error('特殊牌型預檢錯誤:', e);
+}
       
      // 🌟 防護罩：不是標準胡牌，也不是特殊胡牌，直接退回！
       if (!isStandardWin && !isSpecialWin) {
@@ -1275,28 +1273,28 @@ checkCanWin(socketId, tile = null) {
       }
   }
 
-// 🌟 新增：萬用胡牌檢測器（同時支援標準 4面子1雀頭 與 特殊牌型如嚦咕、十三么）
-  isAnyWinningHand(tiles, melds = []) {
-      const normalTiles = tiles.filter(t => t && t.type !== 'flower');
-      
-      // 1. 標準牌型檢查
-      if (this.canFormWinningHand(normalTiles, melds)) return true;
+// 修正後的 isAnyWinningHand 特殊牌型檢查
+isAnyWinningHand(tiles, melds = []) {
+    const normalTiles = tiles.filter(t => t && t.type !== 'flower');
+    
+    // 1. 標準牌型檢查
+    if (this.canFormWinningHand(normalTiles, melds)) return true;
 
-      // 2. 特殊牌型檢查
-      try {
-          if (taiCalculator.checkShiSanYao(normalTiles, melds) || 
-              taiCalculator.checkShiLiuBuDa(normalTiles, melds) ||
-              taiCalculator.checkShiLiuBuDaShe(normalTiles, melds) ||
-              taiCalculator.checkShiLiuBuDaXiangFeng(normalTiles, melds) ||
-              taiCalculator.checkLikwu(normalTiles, melds) ||
-              taiCalculator.checkEightPairsLikwu(normalTiles, melds)) {
-              return true;
-          }
-      } catch (e) {
-          console.error('特殊牌型預檢錯誤:', e);
-      }
-      return false;
-  }
+    // 2. 特殊牌型檢查
+    try {
+        if (taiCalculator.checkShiSanYao(normalTiles, melds) || 
+            taiCalculator.checkShiLiuBuDa(normalTiles, melds) ||
+            taiCalculator.checkShiLiuBuDaShe(normalTiles, melds) ||
+            taiCalculator.checkShiLiuBuDaXiangFeng(normalTiles, melds) ||
+            taiCalculator.checkLikwu(normalTiles, melds, null) || // ✅ 補上 null
+            taiCalculator.checkEightPairsLikwu(normalTiles, melds, null)) { // ✅ 補上 null
+            return true;
+        }
+    } catch (e) {
+        console.error('特殊牌型預檢錯誤:', e);
+    }
+    return false;
+}
 
 canFormWinningHand(tiles, melds = []) {
     if (!tiles || !Array.isArray(tiles)) return false;
