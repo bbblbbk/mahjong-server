@@ -342,9 +342,9 @@ processPulling(winnerSeat, loserSeat, currentScore, isSelfDraw) {
           }
 
           const actionName = type === 'collect' ? '獲得' : '支付';
-          const msg = `✨ [特別賞罰] ${triggerPlayer.name} 觸發【${reason}】${actionName} ${baseAmount} 底 (${Math.abs(totalTransfer)} 分)`;
+          const msg = `[特別賞罰] ${triggerPlayer.name} 觸發【${reason}】${actionName} ${baseAmount} 底 (${Math.abs(totalTransfer)} 分)`;
           
-          console.log(`💰 執行即時轉帳: ${msg}`);
+          console.log(`執行即時轉帳: ${msg}`);
           
           // 廣播給全場
           this.broadcastGameMessage(msg, 'system');
@@ -2869,7 +2869,7 @@ endGame(reason = 'normal') {
   // 🌟 新增：終極大結算發動引擎
   executeFinalMatchSummary() {
       this.gameState = 'summary'; // 🌟 核心修正：狀態必須是 'summary'
-      this.broadcastGameMessage("✨ 整場大賽完全結束！正在生成終極總結算面板... ✨", 'system');
+      this.broadcastGameMessage("整場大賽完全結束！正在生成終極總結算面板... ", 'system');
 
       const matchResults = []; // 確保這裡只有這唯一的一個宣告！
       
